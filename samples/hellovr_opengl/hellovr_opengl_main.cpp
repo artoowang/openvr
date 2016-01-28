@@ -4,6 +4,7 @@
 #include <GL/glew.h>
 #include <SDL_opengl.h>
 #include <gl/glu.h>
+#include <windows.h>
 #include <stdio.h>
 #include <string>
 #include <cstdlib>
@@ -194,6 +195,9 @@ private: // OpenGL bookkeeping
 
 	std::vector< CGLRenderModel * > m_vecRenderModels;
 	CGLRenderModel *m_rTrackedDeviceToRenderModel[ vr::k_unMaxTrackedDeviceCount ];
+
+  std::string submit0_buffer_;
+  std::string submit1_buffer_;
 };
 
 //-----------------------------------------------------------------------------
@@ -562,6 +566,15 @@ void CMainApplication::Shutdown()
 		m_pWindow = NULL;
 	}
 
+  // Print trace messages.
+  FILE* fp;
+  fopen_s(&fp, "submit0.csv", "w");
+  fprintf(fp, "%s", submit0_buffer_.c_str());
+  fclose(fp);
+  fopen_s(&fp, "submit1.csv", "w");
+  fprintf(fp, "%s", submit1_buffer_.c_str());
+  fclose(fp);
+
 	SDL_Quit();
 }
 
@@ -660,6 +673,33 @@ void CMainApplication::ProcessVREvent( const vr::VREvent_t & event )
 	}
 }
 
+double GetTimestampInSeconds() {
+  LARGE_INTEGER li_freq;
+  QueryPerformanceFrequency(&li_freq);
+  LARGE_INTEGER pc;
+  QueryPerformanceCounter(&pc);
+  return static_cast<double>(pc.QuadPart) / li_freq.QuadPart;
+}
+
+static const double kAppStartTimeInSeconds = GetTimestampInSeconds();
+
+class ScopedTimer {
+ public:
+  ScopedTimer(std::string& buffer, const char* name)
+    : start_time_(GetTimestampInSeconds()), buffer_(buffer), name_(name) {
+  }
+  ~ScopedTimer() {
+    const double now = GetTimestampInSeconds();
+    const double duration_in_ms = (now - start_time_) * 1000.0;
+    const double timestamp_in_ms = (now - kAppStartTimeInSeconds) * 1000.0;
+    buffer_ += std::to_string(timestamp_in_ms) + ", " + std::to_string(duration_in_ms) + "\n";
+  }
+
+ private:
+  double start_time_;
+  std::string& buffer_;
+  std::string name_;
+};
 
 //-----------------------------------------------------------------------------
 // Purpose:
@@ -674,9 +714,15 @@ void CMainApplication::RenderFrame()
 		RenderDistortion();
 
 		vr::Texture_t leftEyeTexture = {(void*)leftEyeDesc.m_nResolveTextureId, vr::API_OpenGL, vr::ColorSpace_Gamma };
-		vr::VRCompositor()->Submit(vr::Eye_Left, &leftEyeTexture );
+    {
+      ScopedTimer timer(submit0_buffer_, "Submit0");
+		  vr::VRCompositor()->Submit(vr::Eye_Left, &leftEyeTexture );
+    }
 		vr::Texture_t rightEyeTexture = {(void*)rightEyeDesc.m_nResolveTextureId, vr::API_OpenGL, vr::ColorSpace_Gamma };
-		vr::VRCompositor()->Submit(vr::Eye_Right, &rightEyeTexture );
+    {
+      ScopedTimer timer(submit1_buffer_, "Submit1");
+		  vr::VRCompositor()->Submit(vr::Eye_Right, &rightEyeTexture );
+    }
 	}
 
 	if ( m_bVblank && m_bGlFinishHack )
