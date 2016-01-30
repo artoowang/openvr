@@ -15,6 +15,23 @@
 #include "shared/Matrices.h"
 #include "shared/pathtools.h"
 
+#include "nvToolsExt.h"
+
+int NvtxRangePushColored(const char *msg, uint32_t color) {
+  nvtxEventAttributes_t eventAttrib = { 0 };
+  eventAttrib.version = NVTX_VERSION;
+  eventAttrib.size = NVTX_EVENT_ATTRIB_STRUCT_SIZE;
+  eventAttrib.colorType = NVTX_COLOR_ARGB;
+  eventAttrib.color = color;
+  eventAttrib.messageType = NVTX_MESSAGE_TYPE_ASCII;
+  eventAttrib.message.ascii = msg;
+  return ::nvtxRangePushEx(&eventAttrib);
+}
+
+void NvtxRangePop() {
+  ::nvtxRangePop();
+}
+
 class CGLRenderModel
 {
 public:
@@ -36,6 +53,8 @@ private:
 };
 
 static bool g_bPrintf = true;
+
+static const int kNumBuffers = 2;
 
 //-----------------------------------------------------------------------------
 // Purpose:
@@ -185,8 +204,9 @@ private: // OpenGL bookkeeping
 		GLuint m_nResolveTextureId;
 		GLuint m_nResolveFramebufferId;
 	};
-	FramebufferDesc leftEyeDesc;
-	FramebufferDesc rightEyeDesc;
+	FramebufferDesc leftEyeDesc[kNumBuffers];
+	FramebufferDesc rightEyeDesc[kNumBuffers];
+  int cur_frame_buffer_;
 
 	bool CreateFrameBuffer( int nWidth, int nHeight, FramebufferDesc &framebufferDesc );
 	
@@ -196,6 +216,7 @@ private: // OpenGL bookkeeping
 	std::vector< CGLRenderModel * > m_vecRenderModels;
 	CGLRenderModel *m_rTrackedDeviceToRenderModel[ vr::k_unMaxTrackedDeviceCount ];
 
+  std::string present_buffer_;
   std::string submit0_buffer_;
   std::string submit1_buffer_;
 };
@@ -251,6 +272,7 @@ CMainApplication::CMainApplication( int argc, char *argv[] )
 	, m_iSceneVolumeInit( 20 )
 	, m_strPoseClasses("")
 	, m_bShowCubes( true )
+  , cur_frame_buffer_(0)
 {
 
 	for( int i = 1; i < argc; i++ )
@@ -534,17 +556,20 @@ void CMainApplication::Shutdown()
 			glDeleteProgram( m_unLensProgramID );
 		}
 
-		glDeleteRenderbuffers( 1, &leftEyeDesc.m_nDepthBufferId );
-		glDeleteTextures( 1, &leftEyeDesc.m_nRenderTextureId );
-		glDeleteFramebuffers( 1, &leftEyeDesc.m_nRenderFramebufferId );
-		glDeleteTextures( 1, &leftEyeDesc.m_nResolveTextureId );
-		glDeleteFramebuffers( 1, &leftEyeDesc.m_nResolveFramebufferId );
+    for (int i = 0; i < kNumBuffers; ++i)
+    {
+		  glDeleteRenderbuffers( 1, &leftEyeDesc[i].m_nDepthBufferId );
+		  glDeleteTextures( 1, &leftEyeDesc[i].m_nRenderTextureId );
+		  glDeleteFramebuffers( 1, &leftEyeDesc[i].m_nRenderFramebufferId );
+		  glDeleteTextures( 1, &leftEyeDesc[i].m_nResolveTextureId );
+		  glDeleteFramebuffers( 1, &leftEyeDesc[i].m_nResolveFramebufferId );
 
-		glDeleteRenderbuffers( 1, &rightEyeDesc.m_nDepthBufferId );
-		glDeleteTextures( 1, &rightEyeDesc.m_nRenderTextureId );
-		glDeleteFramebuffers( 1, &rightEyeDesc.m_nRenderFramebufferId );
-		glDeleteTextures( 1, &rightEyeDesc.m_nResolveTextureId );
-		glDeleteFramebuffers( 1, &rightEyeDesc.m_nResolveFramebufferId );
+		  glDeleteRenderbuffers( 1, &rightEyeDesc[i].m_nDepthBufferId );
+		  glDeleteTextures( 1, &rightEyeDesc[i].m_nRenderTextureId );
+		  glDeleteFramebuffers( 1, &rightEyeDesc[i].m_nRenderFramebufferId );
+		  glDeleteTextures( 1, &rightEyeDesc[i].m_nResolveTextureId );
+		  glDeleteFramebuffers( 1, &rightEyeDesc[i].m_nResolveFramebufferId );
+    }
 
 		if( m_unLensVAO != 0 )
 		{
@@ -573,6 +598,9 @@ void CMainApplication::Shutdown()
   fclose(fp);
   fopen_s(&fp, "submit1.csv", "w");
   fprintf(fp, "%s", submit1_buffer_.c_str());
+  fclose(fp);
+  fopen_s(&fp, "present.csv", "w");
+  fprintf(fp, "%s", present_buffer_.c_str());
   fclose(fp);
 
 	SDL_Quit();
@@ -681,18 +709,25 @@ double GetTimestampInSeconds() {
   return static_cast<double>(pc.QuadPart) / li_freq.QuadPart;
 }
 
+void SleepNMilliseconds(double n) {
+  const double start = GetTimestampInSeconds();
+  while (GetTimestampInSeconds() - start < n * 0.001);
+}
+
 static const double kAppStartTimeInSeconds = GetTimestampInSeconds();
 
 class ScopedTimer {
  public:
   ScopedTimer(std::string& buffer, const char* name)
     : start_time_(GetTimestampInSeconds()), buffer_(buffer), name_(name) {
+    NvtxRangePushColored(name, 0xFFcccc00);
   }
   ~ScopedTimer() {
     const double now = GetTimestampInSeconds();
     const double duration_in_ms = (now - start_time_) * 1000.0;
     const double timestamp_in_ms = (now - kAppStartTimeInSeconds) * 1000.0;
     buffer_ += std::to_string(timestamp_in_ms) + ", " + std::to_string(duration_in_ms) + "\n";
+    NvtxRangePop();
   }
 
  private:
@@ -713,14 +748,27 @@ void CMainApplication::RenderFrame()
 		RenderStereoTargets();
 		RenderDistortion();
 
-		vr::Texture_t leftEyeTexture = {(void*)leftEyeDesc.m_nResolveTextureId, vr::API_OpenGL, vr::ColorSpace_Gamma };
+    // TODO: try sleep 3ms before submitting and see if Submit() still stalls.
+    //SleepNMilliseconds(3.0);
+
+    {
+      ScopedTimer timer(present_buffer_, "Finish");
+      glFinish();
+    }
+
+    dprintf("Submit left eye: %d\n", leftEyeDesc[cur_frame_buffer_].m_nResolveTextureId);
+		vr::Texture_t leftEyeTexture = {(void*)leftEyeDesc[cur_frame_buffer_].m_nResolveTextureId, vr::API_OpenGL, vr::ColorSpace_Gamma };
     {
       ScopedTimer timer(submit0_buffer_, "Submit0");
+      //glColor3b(100, 100, 0); // This is for gDEBugger
 		  vr::VRCompositor()->Submit(vr::Eye_Left, &leftEyeTexture );
     }
-		vr::Texture_t rightEyeTexture = {(void*)rightEyeDesc.m_nResolveTextureId, vr::API_OpenGL, vr::ColorSpace_Gamma };
+
+    dprintf("Submit right eye: %d\n", rightEyeDesc[cur_frame_buffer_].m_nResolveTextureId);
+    vr::Texture_t rightEyeTexture = {(void*)rightEyeDesc[cur_frame_buffer_].m_nResolveTextureId, vr::API_OpenGL, vr::ColorSpace_Gamma };
     {
       ScopedTimer timer(submit1_buffer_, "Submit1");
+      //glColor3b(100, 100, 1);
 		  vr::VRCompositor()->Submit(vr::Eye_Right, &rightEyeTexture );
     }
 	}
@@ -762,6 +810,8 @@ void CMainApplication::RenderFrame()
 		
 		dprintf( "PoseCount:%d(%s) Controllers:%d\n", m_iValidPoseCount, m_strPoseClasses.c_str(), m_iTrackedControllerCount );
 	}
+
+  //cur_frame_buffer_ = (cur_frame_buffer_ + 1) % kNumBuffers;
 
 	UpdateHMDMatrixPose();
 }
@@ -1290,6 +1340,7 @@ bool CMainApplication::CreateFrameBuffer( int nWidth, int nHeight, FramebufferDe
 	glBindFramebuffer(GL_FRAMEBUFFER, framebufferDesc.m_nResolveFramebufferId);
 
 	glGenTextures(1, &framebufferDesc.m_nResolveTextureId );
+  dprintf("Frame buffer texture created: %d\n", framebufferDesc.m_nResolveTextureId);
 	glBindTexture(GL_TEXTURE_2D, framebufferDesc.m_nResolveTextureId );
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 0);
@@ -1319,8 +1370,16 @@ bool CMainApplication::SetupStereoRenderTargets()
 
 	m_pHMD->GetRecommendedRenderTargetSize( &m_nRenderWidth, &m_nRenderHeight );
 
-	CreateFrameBuffer( m_nRenderWidth, m_nRenderHeight, leftEyeDesc );
-	CreateFrameBuffer( m_nRenderWidth, m_nRenderHeight, rightEyeDesc );
+  dprintf("Create left eye frame buffer ...\n");
+  for (int i = 0; i < kNumBuffers; ++i)
+  {
+	  CreateFrameBuffer( m_nRenderWidth, m_nRenderHeight, leftEyeDesc[i] );
+  }
+  dprintf("Create right eye frame buffer ...\n");
+  for (int i = 0; i < kNumBuffers; ++i)
+  {
+	  CreateFrameBuffer( m_nRenderWidth, m_nRenderHeight, rightEyeDesc[i] );
+  }
 	
 	return true;
 }
@@ -1469,15 +1528,15 @@ void CMainApplication::RenderStereoTargets()
 	glEnable( GL_MULTISAMPLE );
 
 	// Left Eye
-	glBindFramebuffer( GL_FRAMEBUFFER, leftEyeDesc.m_nRenderFramebufferId );
+	glBindFramebuffer( GL_FRAMEBUFFER, leftEyeDesc[cur_frame_buffer_].m_nRenderFramebufferId );
  	glViewport(0, 0, m_nRenderWidth, m_nRenderHeight );
  	RenderScene( vr::Eye_Left );
  	glBindFramebuffer( GL_FRAMEBUFFER, 0 );
 	
 	glDisable( GL_MULTISAMPLE );
 	 	
- 	glBindFramebuffer(GL_READ_FRAMEBUFFER, leftEyeDesc.m_nRenderFramebufferId);
-    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, leftEyeDesc.m_nResolveFramebufferId );
+ 	glBindFramebuffer(GL_READ_FRAMEBUFFER, leftEyeDesc[cur_frame_buffer_].m_nRenderFramebufferId);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, leftEyeDesc[cur_frame_buffer_].m_nResolveFramebufferId );
 
     glBlitFramebuffer( 0, 0, m_nRenderWidth, m_nRenderHeight, 0, 0, m_nRenderWidth, m_nRenderHeight, 
 		GL_COLOR_BUFFER_BIT,
@@ -1489,15 +1548,15 @@ void CMainApplication::RenderStereoTargets()
 	glEnable( GL_MULTISAMPLE );
 
 	// Right Eye
-	glBindFramebuffer( GL_FRAMEBUFFER, rightEyeDesc.m_nRenderFramebufferId );
+	glBindFramebuffer( GL_FRAMEBUFFER, rightEyeDesc[cur_frame_buffer_].m_nRenderFramebufferId );
  	glViewport(0, 0, m_nRenderWidth, m_nRenderHeight );
  	RenderScene( vr::Eye_Right );
  	glBindFramebuffer( GL_FRAMEBUFFER, 0 );
  	
 	glDisable( GL_MULTISAMPLE );
 
- 	glBindFramebuffer(GL_READ_FRAMEBUFFER, rightEyeDesc.m_nRenderFramebufferId );
-    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, rightEyeDesc.m_nResolveFramebufferId );
+ 	glBindFramebuffer(GL_READ_FRAMEBUFFER, rightEyeDesc[cur_frame_buffer_].m_nRenderFramebufferId );
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, rightEyeDesc[cur_frame_buffer_].m_nResolveFramebufferId );
 	
     glBlitFramebuffer( 0, 0, m_nRenderWidth, m_nRenderHeight, 0, 0, m_nRenderWidth, m_nRenderHeight, 
 		GL_COLOR_BUFFER_BIT,
@@ -1576,7 +1635,7 @@ void CMainApplication::RenderDistortion()
 	glUseProgram( m_unLensProgramID );
 
 	//render left lens (first half of index array )
-	glBindTexture(GL_TEXTURE_2D, leftEyeDesc.m_nResolveTextureId );
+	glBindTexture(GL_TEXTURE_2D, leftEyeDesc[cur_frame_buffer_].m_nResolveTextureId );
 	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE );
 	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE );
 	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR );
@@ -1584,7 +1643,7 @@ void CMainApplication::RenderDistortion()
 	glDrawElements( GL_TRIANGLES, m_uiIndexSize/2, GL_UNSIGNED_SHORT, 0 );
 
 	//render right lens (second half of index array )
-	glBindTexture(GL_TEXTURE_2D, rightEyeDesc.m_nResolveTextureId  );
+	glBindTexture(GL_TEXTURE_2D, rightEyeDesc[cur_frame_buffer_].m_nResolveTextureId  );
 	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE );
 	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE );
 	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR );
@@ -1662,7 +1721,9 @@ void CMainApplication::UpdateHMDMatrixPose()
 	if ( !m_pHMD )
 		return;
 
+  NvtxRangePushColored("WaitGetPoses", 0xFF000000);
 	vr::VRCompositor()->WaitGetPoses(m_rTrackedDevicePose, vr::k_unMaxTrackedDeviceCount, NULL, 0 );
+  NvtxRangePop();
 
 	m_iValidPoseCount = 0;
 	m_strPoseClasses = "";
