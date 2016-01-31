@@ -17,6 +17,8 @@
 
 #include "nvToolsExt.h"
 
+//#define USE_OPENVR
+
 int NvtxRangePushColored(const char *msg, uint32_t color) {
   nvtxEventAttributes_t eventAttrib = { 0 };
   eventAttrib.version = NVTX_VERSION;
@@ -54,7 +56,7 @@ private:
 
 static bool g_bPrintf = true;
 
-static const int kNumBuffers = 2;
+static const int kNumBuffers = 1;
 
 //-----------------------------------------------------------------------------
 // Purpose:
@@ -347,6 +349,7 @@ bool CMainApplication::BInit()
 		return false;
 	}
 
+#ifdef USE_OPENVR
 	// Loading the SteamVR Runtime
 	vr::EVRInitError eError = vr::VRInitError_None;
 	m_pHMD = vr::VR_Init( &eError, vr::VRApplication_Scene );
@@ -372,6 +375,7 @@ bool CMainApplication::BInit()
 		SDL_ShowSimpleMessageBox( SDL_MESSAGEBOX_ERROR, "VR_Init Failed", buf, NULL );
 		return false;
 	}
+#endif
 
 	int nWindowPosX = 700;
 	int nWindowPosY = 100;
@@ -422,8 +426,10 @@ bool CMainApplication::BInit()
 	m_strDriver = "No Driver";
 	m_strDisplay = "No Display";
 
+#ifdef USE_OPENVR
 	m_strDriver = GetTrackedDeviceString( m_pHMD, vr::k_unTrackedDeviceIndex_Hmd, vr::Prop_TrackingSystemName_String );
 	m_strDisplay = GetTrackedDeviceString( m_pHMD, vr::k_unTrackedDeviceIndex_Hmd, vr::Prop_SerialNumber_String );
+#endif
 
 	std::string strWindowTitle = "hellovr_sdl - " + m_strDriver + " " + m_strDisplay;
 	SDL_SetWindowTitle( m_pWindow, strWindowTitle.c_str() );
@@ -451,11 +457,13 @@ bool CMainApplication::BInit()
 		return false;
 	}
 
+#ifdef USE_OPENVR
 	if (!BInitCompositor())
 	{
 		printf("%s - Failed to initialize VR Compositor!\n", __FUNCTION__);
 		return false;
 	}
+#endif
 
 	return true;
 }
@@ -634,6 +642,7 @@ bool CMainApplication::HandleInput()
 		}
 	}
 
+#ifdef USE_OPENVR
 	// Process SteamVR events
 	vr::VREvent_t event;
 	while( m_pHMD->PollNextEvent( &event ) )
@@ -650,6 +659,7 @@ bool CMainApplication::HandleInput()
 			m_rbShowTrackedDevice[ unDevice ] = state.ulButtonPressed == 0;
 		}
 	}
+#endif
 
 	return bRet;
 }
@@ -742,36 +752,35 @@ class ScopedTimer {
 void CMainApplication::RenderFrame()
 {
 	// for now as fast as possible
-	if ( m_pHMD )
-	{
-		DrawControllers();
-		RenderStereoTargets();
-		RenderDistortion();
+	//DrawControllers();
+	RenderStereoTargets();
+	RenderDistortion();
 
-    // TODO: try sleep 3ms before submitting and see if Submit() still stalls.
-    //SleepNMilliseconds(3.0);
+  // TODO: try sleep 3ms before submitting and see if Submit() still stalls.
+  //SleepNMilliseconds(3.0);
 
-    {
-      ScopedTimer timer(present_buffer_, "Finish");
-      glFinish();
-    }
+  {
+    //ScopedTimer timer(present_buffer_, "Finish");
+    //glFinish();
+  }
 
-    dprintf("Submit left eye: %d\n", leftEyeDesc[cur_frame_buffer_].m_nResolveTextureId);
-		vr::Texture_t leftEyeTexture = {(void*)leftEyeDesc[cur_frame_buffer_].m_nResolveTextureId, vr::API_OpenGL, vr::ColorSpace_Gamma };
-    {
-      ScopedTimer timer(submit0_buffer_, "Submit0");
-      //glColor3b(100, 100, 0); // This is for gDEBugger
-		  vr::VRCompositor()->Submit(vr::Eye_Left, &leftEyeTexture );
-    }
+#ifdef USE_OPENVR
+  dprintf("Submit left eye: %d\n", leftEyeDesc[cur_frame_buffer_].m_nResolveTextureId);
+	vr::Texture_t leftEyeTexture = {(void*)leftEyeDesc[cur_frame_buffer_].m_nResolveTextureId, vr::API_OpenGL, vr::ColorSpace_Gamma };
+  {
+    ScopedTimer timer(submit0_buffer_, "Submit0");
+    //glColor3b(100, 100, 0); // This is for gDEBugger
+		vr::VRCompositor()->Submit(vr::Eye_Left, &leftEyeTexture );
+  }
 
-    dprintf("Submit right eye: %d\n", rightEyeDesc[cur_frame_buffer_].m_nResolveTextureId);
-    vr::Texture_t rightEyeTexture = {(void*)rightEyeDesc[cur_frame_buffer_].m_nResolveTextureId, vr::API_OpenGL, vr::ColorSpace_Gamma };
-    {
-      ScopedTimer timer(submit1_buffer_, "Submit1");
-      //glColor3b(100, 100, 1);
-		  vr::VRCompositor()->Submit(vr::Eye_Right, &rightEyeTexture );
-    }
-	}
+  dprintf("Submit right eye: %d\n", rightEyeDesc[cur_frame_buffer_].m_nResolveTextureId);
+  vr::Texture_t rightEyeTexture = {(void*)rightEyeDesc[cur_frame_buffer_].m_nResolveTextureId, vr::API_OpenGL, vr::ColorSpace_Gamma };
+  {
+    ScopedTimer timer(submit1_buffer_, "Submit1");
+    //glColor3b(100, 100, 1);
+		vr::VRCompositor()->Submit(vr::Eye_Right, &rightEyeTexture );
+  }
+#endif
 
 	if ( m_bVblank && m_bGlFinishHack )
 	{
@@ -1074,9 +1083,6 @@ bool CMainApplication::SetupTexturemaps()
 //-----------------------------------------------------------------------------
 void CMainApplication::SetupScene()
 {
-	if ( !m_pHMD )
-		return;
-
 	std::vector<float> vertdataarray;
 
 	Matrix4 matScale;
@@ -1124,8 +1130,9 @@ void CMainApplication::SetupScene()
 	glVertexAttribPointer( 1, 2, GL_FLOAT, GL_FALSE, stride, (const void *)offset);
 
 	glBindVertexArray( 0 );
-	glDisableVertexAttribArray(0);
-	glDisableVertexAttribArray(1);
+  // TODO: do we need these?
+	//glDisableVertexAttribArray(0);
+	//glDisableVertexAttribArray(1);
 
 }
 
@@ -1209,6 +1216,7 @@ void CMainApplication::AddCubeToScene( Matrix4 mat, std::vector<float> &vertdata
 //-----------------------------------------------------------------------------
 void CMainApplication::DrawControllers()
 {
+#ifdef USE_OPENVR
 	// don't draw controllers if somebody else has input focus
 	if( m_pHMD->IsInputFocusCapturedByAnotherProcess() )
 		return;
@@ -1303,6 +1311,7 @@ void CMainApplication::DrawControllers()
 		//$ TODO: Use glBufferSubData for this...
 		glBufferData( GL_ARRAY_BUFFER, sizeof(float) * vertdataarray.size(), &vertdataarray[0], GL_STREAM_DRAW );
 	}
+#endif
 }
 
 
@@ -1311,10 +1320,30 @@ void CMainApplication::DrawControllers()
 //-----------------------------------------------------------------------------
 void CMainApplication::SetupCameras()
 {
+#ifdef USE_OPENVR
 	m_mat4ProjectionLeft = GetHMDMatrixProjectionEye( vr::Eye_Left );
 	m_mat4ProjectionRight = GetHMDMatrixProjectionEye( vr::Eye_Right );
 	m_mat4eyePosLeft = GetHMDMatrixPoseEye( vr::Eye_Left );
 	m_mat4eyePosRight = GetHMDMatrixPoseEye( vr::Eye_Right );
+#else
+  // Column major.
+  m_mat4ProjectionLeft.set(
+    1.35799515f, 0.f, 0.f, 0.f,
+    0.f, 2.41421342f, 0.f, 0.f,
+    0.f, 0.f, -1.00200200f, -1.f,
+    0.f, 0.f, -2.00200200f, 0.f);
+  m_mat4ProjectionRight = m_mat4ProjectionLeft;
+  m_mat4eyePosLeft.set(
+    1.f, 0.f, 0.f, 0.f,
+    0.f, 1.f, 0.f, 0.f,
+    0.f, 0.f, 1.f, 0.f,
+    -0.05f, 0.f, 0.f, 1.f);
+  m_mat4eyePosRight.set(
+    1.f, 0.f, 0.f, 0.f,
+    0.f, 1.f, 0.f, 0.f,
+    0.f, 0.f, 1.f, 0.f,
+    0.05f, 0.f, 0.f, 1.f);
+#endif
 }
 
 
@@ -1365,10 +1394,12 @@ bool CMainApplication::CreateFrameBuffer( int nWidth, int nHeight, FramebufferDe
 //-----------------------------------------------------------------------------
 bool CMainApplication::SetupStereoRenderTargets()
 {
-	if ( !m_pHMD )
-		return false;
-
-	m_pHMD->GetRecommendedRenderTargetSize( &m_nRenderWidth, &m_nRenderHeight );
+  if (m_pHMD) {
+	  m_pHMD->GetRecommendedRenderTargetSize( &m_nRenderWidth, &m_nRenderHeight );
+  } else {
+    m_nRenderWidth = 500;
+    m_nRenderHeight = 500;
+  }
 
   dprintf("Create left eye frame buffer ...\n");
   for (int i = 0; i < kNumBuffers; ++i)
@@ -1390,9 +1421,6 @@ bool CMainApplication::SetupStereoRenderTargets()
 //-----------------------------------------------------------------------------
 void CMainApplication::SetupDistortion()
 {
-	if ( !m_pHMD )
-		return;
-
 	GLushort m_iLensGridSegmentCountH = 43;
 	GLushort m_iLensGridSegmentCountV = 43;
 
@@ -1413,7 +1441,13 @@ void CMainApplication::SetupDistortion()
 			u = x*w; v = 1-y*h;
 			vert.position = Vector2( Xoffset+u, -1+2*y*h );
 
-			vr::DistortionCoordinates_t dc0 = m_pHMD->ComputeDistortion(vr::Eye_Left, u, v);
+			vr::DistortionCoordinates_t dc0;
+      if (m_pHMD) {
+        dc0 = m_pHMD->ComputeDistortion(vr::Eye_Left, u, v);
+      } else {
+        dc0.rfRed[0] = dc0.rfGreen[0] = dc0.rfBlue[0] = u;
+        dc0.rfRed[1] = dc0.rfGreen[1] = dc0.rfBlue[1] = v;
+      }
 
 			vert.texCoordRed = Vector2(dc0.rfRed[0], 1 - dc0.rfRed[1]);
 			vert.texCoordGreen =  Vector2(dc0.rfGreen[0], 1 - dc0.rfGreen[1]);
@@ -1432,7 +1466,13 @@ void CMainApplication::SetupDistortion()
 			u = x*w; v = 1-y*h;
 			vert.position = Vector2( Xoffset+u, -1+2*y*h );
 
-			vr::DistortionCoordinates_t dc0 = m_pHMD->ComputeDistortion( vr::Eye_Right, u, v );
+      vr::DistortionCoordinates_t dc0;
+      if (m_pHMD) {
+        dc0 = m_pHMD->ComputeDistortion(vr::Eye_Right, u, v);
+      } else {
+        dc0.rfRed[0] = dc0.rfGreen[0] = dc0.rfBlue[0] = u;
+        dc0.rfRed[1] = dc0.rfGreen[1] = dc0.rfBlue[1] = v;
+      }
 
 			vert.texCoordRed = Vector2(dc0.rfRed[0], 1 - dc0.rfRed[1]);
 			vert.texCoordGreen = Vector2(dc0.rfGreen[0], 1 - dc0.rfGreen[1]);
@@ -1509,10 +1549,11 @@ void CMainApplication::SetupDistortion()
 
 	glBindVertexArray( 0 );
 
-	glDisableVertexAttribArray(0);
-	glDisableVertexAttribArray(1);
-	glDisableVertexAttribArray(2);
-	glDisableVertexAttribArray(3);
+  // TODO: do we need these?
+	//glDisableVertexAttribArray(0);
+	//glDisableVertexAttribArray(1);
+	//glDisableVertexAttribArray(2);
+	//glDisableVertexAttribArray(3);
 
 	glBindBuffer(GL_ARRAY_BUFFER, 0);
 	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
@@ -1585,41 +1626,43 @@ void CMainApplication::RenderScene( vr::Hmd_Eye nEye )
 		glBindVertexArray( 0 );
 	}
 
-	bool bIsInputCapturedByAnotherProcess = m_pHMD->IsInputFocusCapturedByAnotherProcess();
+  if (m_pHMD) {
+	  bool bIsInputCapturedByAnotherProcess = m_pHMD->IsInputFocusCapturedByAnotherProcess();
 
-	if( !bIsInputCapturedByAnotherProcess )
-	{
-		// draw the controller axis lines
-		glUseProgram( m_unControllerTransformProgramID );
-		glUniformMatrix4fv( m_nControllerMatrixLocation, 1, GL_FALSE, GetCurrentViewProjectionMatrix( nEye ).get() );
-		glBindVertexArray( m_unControllerVAO );
-		glDrawArrays( GL_LINES, 0, m_uiControllerVertcount );
-		glBindVertexArray( 0 );
-	}
+	  if( !bIsInputCapturedByAnotherProcess )
+	  {
+		  // draw the controller axis lines
+		  glUseProgram( m_unControllerTransformProgramID );
+		  glUniformMatrix4fv( m_nControllerMatrixLocation, 1, GL_FALSE, GetCurrentViewProjectionMatrix( nEye ).get() );
+		  glBindVertexArray( m_unControllerVAO );
+		  glDrawArrays( GL_LINES, 0, m_uiControllerVertcount );
+		  glBindVertexArray( 0 );
+	  }
 
-	// ----- Render Model rendering -----
-	glUseProgram( m_unRenderModelProgramID );
+	  // ----- Render Model rendering -----
+	  glUseProgram( m_unRenderModelProgramID );
 
-	for( uint32_t unTrackedDevice = 0; unTrackedDevice < vr::k_unMaxTrackedDeviceCount; unTrackedDevice++ )
-	{
-		if( !m_rTrackedDeviceToRenderModel[ unTrackedDevice ] || !m_rbShowTrackedDevice[ unTrackedDevice ] )
-			continue;
+	  for( uint32_t unTrackedDevice = 0; unTrackedDevice < vr::k_unMaxTrackedDeviceCount; unTrackedDevice++ )
+	  {
+		  if( !m_rTrackedDeviceToRenderModel[ unTrackedDevice ] || !m_rbShowTrackedDevice[ unTrackedDevice ] )
+			  continue;
 
-		const vr::TrackedDevicePose_t & pose = m_rTrackedDevicePose[ unTrackedDevice ];
-		if( !pose.bPoseIsValid )
-			continue;
+		  const vr::TrackedDevicePose_t & pose = m_rTrackedDevicePose[ unTrackedDevice ];
+		  if( !pose.bPoseIsValid )
+			  continue;
 
-		if( bIsInputCapturedByAnotherProcess && m_pHMD->GetTrackedDeviceClass( unTrackedDevice ) == vr::TrackedDeviceClass_Controller )
-			continue;
+		  if( bIsInputCapturedByAnotherProcess && m_pHMD->GetTrackedDeviceClass( unTrackedDevice ) == vr::TrackedDeviceClass_Controller )
+			  continue;
 
-		const Matrix4 & matDeviceToTracking = m_rmat4DevicePose[ unTrackedDevice ];
-		Matrix4 matMVP = GetCurrentViewProjectionMatrix( nEye ) * matDeviceToTracking;
-		glUniformMatrix4fv( m_nRenderModelMatrixLocation, 1, GL_FALSE, matMVP.get() );
+		  const Matrix4 & matDeviceToTracking = m_rmat4DevicePose[ unTrackedDevice ];
+		  Matrix4 matMVP = GetCurrentViewProjectionMatrix( nEye ) * matDeviceToTracking;
+		  glUniformMatrix4fv( m_nRenderModelMatrixLocation, 1, GL_FALSE, matMVP.get() );
 
-		m_rTrackedDeviceToRenderModel[ unTrackedDevice ]->Draw();
-	}
+		  m_rTrackedDeviceToRenderModel[ unTrackedDevice ]->Draw();
+	  }
 
-	glUseProgram( 0 );
+	  glUseProgram( 0 );
+  }
 }
 
 
