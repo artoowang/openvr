@@ -203,8 +203,6 @@ private: // OpenGL bookkeeping
 		GLuint m_nDepthBufferId;
 		GLuint m_nRenderTextureId;
 		GLuint m_nRenderFramebufferId;
-		GLuint m_nResolveTextureId;
-		GLuint m_nResolveFramebufferId;
 	};
 	FramebufferDesc leftEyeDesc[kNumBuffers];
 	FramebufferDesc rightEyeDesc[kNumBuffers];
@@ -258,7 +256,7 @@ CMainApplication::CMainApplication( int argc, char *argv[] )
 	, m_bDebugOpenGL( false )
 	, m_bVerbose( false )
 	, m_bPerf( false )
-	, m_bVblank( false )
+	, m_bVblank( true )
 	, m_bGlFinishHack( true )
 	, m_glControllerVertBuffer( 0 )
 	, m_unControllerVAO( 0 )
@@ -569,14 +567,10 @@ void CMainApplication::Shutdown()
 		  glDeleteRenderbuffers( 1, &leftEyeDesc[i].m_nDepthBufferId );
 		  glDeleteTextures( 1, &leftEyeDesc[i].m_nRenderTextureId );
 		  glDeleteFramebuffers( 1, &leftEyeDesc[i].m_nRenderFramebufferId );
-		  glDeleteTextures( 1, &leftEyeDesc[i].m_nResolveTextureId );
-		  glDeleteFramebuffers( 1, &leftEyeDesc[i].m_nResolveFramebufferId );
 
 		  glDeleteRenderbuffers( 1, &rightEyeDesc[i].m_nDepthBufferId );
 		  glDeleteTextures( 1, &rightEyeDesc[i].m_nRenderTextureId );
 		  glDeleteFramebuffers( 1, &rightEyeDesc[i].m_nRenderFramebufferId );
-		  glDeleteTextures( 1, &rightEyeDesc[i].m_nResolveTextureId );
-		  glDeleteFramebuffers( 1, &rightEyeDesc[i].m_nResolveFramebufferId );
     }
 
 		if( m_unLensVAO != 0 )
@@ -751,10 +745,11 @@ class ScopedTimer {
 //-----------------------------------------------------------------------------
 void CMainApplication::RenderFrame()
 {
+  NvtxRangePushColored("RenderFrame", 0xFFAA0000);
 	// for now as fast as possible
 	//DrawControllers();
 	RenderStereoTargets();
-	RenderDistortion();
+	//RenderDistortion();
 
   // TODO: try sleep 3ms before submitting and see if Submit() still stalls.
   //SleepNMilliseconds(3.0);
@@ -793,7 +788,9 @@ void CMainApplication::RenderFrame()
 
 	// SwapWindow
 	{
+    NvtxRangePushColored("SDL_GL_SwapWindow", 0xFF00AA00);
 		SDL_GL_SwapWindow( m_pWindow );
+    NvtxRangePop();
 	}
 
 	// Clear
@@ -823,6 +820,8 @@ void CMainApplication::RenderFrame()
   //cur_frame_buffer_ = (cur_frame_buffer_ + 1) % kNumBuffers;
 
 	UpdateHMDMatrixPose();
+
+  NvtxRangePop();
 }
 
 
@@ -1357,24 +1356,16 @@ bool CMainApplication::CreateFrameBuffer( int nWidth, int nHeight, FramebufferDe
 
 	glGenRenderbuffers(1, &framebufferDesc.m_nDepthBufferId);
 	glBindRenderbuffer(GL_RENDERBUFFER, framebufferDesc.m_nDepthBufferId);
-	glRenderbufferStorageMultisample(GL_RENDERBUFFER, 4, GL_DEPTH_COMPONENT, nWidth, nHeight );
-	glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER,	framebufferDesc.m_nDepthBufferId );
+	glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT, nWidth, nHeight);
+	glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER,	framebufferDesc.m_nDepthBufferId);
 
 	glGenTextures(1, &framebufferDesc.m_nRenderTextureId );
-	glBindTexture(GL_TEXTURE_2D_MULTISAMPLE, framebufferDesc.m_nRenderTextureId );
-	glTexImage2DMultisample(GL_TEXTURE_2D_MULTISAMPLE, 4, GL_RGBA8, nWidth, nHeight, true);
-	glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D_MULTISAMPLE, framebufferDesc.m_nRenderTextureId, 0);
-
-	glGenFramebuffers(1, &framebufferDesc.m_nResolveFramebufferId );
-	glBindFramebuffer(GL_FRAMEBUFFER, framebufferDesc.m_nResolveFramebufferId);
-
-	glGenTextures(1, &framebufferDesc.m_nResolveTextureId );
-  dprintf("Frame buffer texture created: %d\n", framebufferDesc.m_nResolveTextureId);
-	glBindTexture(GL_TEXTURE_2D, framebufferDesc.m_nResolveTextureId );
+  dprintf("Frame buffer texture created: %d\n", framebufferDesc.m_nRenderTextureId);
+	glBindTexture(GL_TEXTURE_2D, framebufferDesc.m_nRenderTextureId );
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 0);
 	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, nWidth, nHeight, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
-	glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, framebufferDesc.m_nResolveTextureId, 0);
+	glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, framebufferDesc.m_nRenderTextureId, 0);
 
 	// check FBO status
 	GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
@@ -1566,45 +1557,18 @@ void CMainApplication::SetupDistortion()
 void CMainApplication::RenderStereoTargets()
 {
 	glClearColor( 0.15f, 0.15f, 0.18f, 1.0f ); // nice background color, but not black
-	glEnable( GL_MULTISAMPLE );
 
 	// Left Eye
 	glBindFramebuffer( GL_FRAMEBUFFER, leftEyeDesc[cur_frame_buffer_].m_nRenderFramebufferId );
  	glViewport(0, 0, m_nRenderWidth, m_nRenderHeight );
  	RenderScene( vr::Eye_Left );
  	glBindFramebuffer( GL_FRAMEBUFFER, 0 );
-	
-	glDisable( GL_MULTISAMPLE );
-	 	
- 	glBindFramebuffer(GL_READ_FRAMEBUFFER, leftEyeDesc[cur_frame_buffer_].m_nRenderFramebufferId);
-    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, leftEyeDesc[cur_frame_buffer_].m_nResolveFramebufferId );
-
-    glBlitFramebuffer( 0, 0, m_nRenderWidth, m_nRenderHeight, 0, 0, m_nRenderWidth, m_nRenderHeight, 
-		GL_COLOR_BUFFER_BIT,
- 		GL_LINEAR );
-
- 	glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
-    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0 );	
-
-	glEnable( GL_MULTISAMPLE );
 
 	// Right Eye
 	glBindFramebuffer( GL_FRAMEBUFFER, rightEyeDesc[cur_frame_buffer_].m_nRenderFramebufferId );
  	glViewport(0, 0, m_nRenderWidth, m_nRenderHeight );
  	RenderScene( vr::Eye_Right );
  	glBindFramebuffer( GL_FRAMEBUFFER, 0 );
- 	
-	glDisable( GL_MULTISAMPLE );
-
- 	glBindFramebuffer(GL_READ_FRAMEBUFFER, rightEyeDesc[cur_frame_buffer_].m_nRenderFramebufferId );
-    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, rightEyeDesc[cur_frame_buffer_].m_nResolveFramebufferId );
-	
-    glBlitFramebuffer( 0, 0, m_nRenderWidth, m_nRenderHeight, 0, 0, m_nRenderWidth, m_nRenderHeight, 
-		GL_COLOR_BUFFER_BIT,
- 		GL_LINEAR  );
-
- 	glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
-    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0 );
 }
 
 
@@ -1678,7 +1642,7 @@ void CMainApplication::RenderDistortion()
 	glUseProgram( m_unLensProgramID );
 
 	//render left lens (first half of index array )
-	glBindTexture(GL_TEXTURE_2D, leftEyeDesc[cur_frame_buffer_].m_nResolveTextureId );
+	glBindTexture(GL_TEXTURE_2D, leftEyeDesc[cur_frame_buffer_].m_nRenderTextureId);
 	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE );
 	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE );
 	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR );
@@ -1686,7 +1650,7 @@ void CMainApplication::RenderDistortion()
 	glDrawElements( GL_TRIANGLES, m_uiIndexSize/2, GL_UNSIGNED_SHORT, 0 );
 
 	//render right lens (second half of index array )
-	glBindTexture(GL_TEXTURE_2D, rightEyeDesc[cur_frame_buffer_].m_nResolveTextureId  );
+	glBindTexture(GL_TEXTURE_2D, rightEyeDesc[cur_frame_buffer_].m_nRenderTextureId);
 	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE );
 	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE );
 	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR );
