@@ -19,7 +19,8 @@
 
 #include "nvToolsExt.h"
 
-//#define USE_OPENVR
+#define USE_OPENVR
+#define USE_DIRECTX_TEXTURE
 
 // Definitions from NV_DX_interop.
 #define WGL_ACCESS_WRITE_DISCARD_NV 0x0002
@@ -280,7 +281,11 @@ CMainApplication::CMainApplication( int argc, char *argv[] )
 	, m_bDebugOpenGL( false )
 	, m_bVerbose( false )
 	, m_bPerf( false )
+#ifdef USE_OPENVR
+  , m_bVblank( false )
+#else
 	, m_bVblank( true )
+#endif
 	, m_bGlFinishHack( true )
 	, m_glControllerVertBuffer( 0 )
 	, m_unControllerVAO( 0 )
@@ -812,24 +817,24 @@ void CMainApplication::RenderFrame()
 #ifdef USE_DIRECTX_TEXTURE
   vr::Texture_t leftEyeTexture = {(void*)d3d_tex_[0], vr::API_DirectX, vr::ColorSpace_Gamma};
 #else
-	vr::Texture_t leftEyeTexture = {(void*)leftEyeDesc[cur_frame_buffer_].m_nResolveTextureId, vr::API_OpenGL, vr::ColorSpace_Gamma};
+	vr::Texture_t leftEyeTexture = {(void*)leftEyeDesc[cur_frame_buffer_].m_nRenderTextureId, vr::API_OpenGL, vr::ColorSpace_Gamma};
 #endif
   {
     ScopedTimer timer(submit0_buffer_, "Submit0");
     //glColor3b(100, 100, 0); // This is for gDEBugger
-		vr::VRCompositor()->Submit(vr::Eye_Left, &leftEyeTexture );
+		vr::VRCompositor()->Submit(vr::Eye_Left, &leftEyeTexture);
   }
 
   //dprintf("Submit right eye: %d\n", rightEyeDesc[cur_frame_buffer_].m_nResolveTextureId);
 #ifdef USE_DIRECTX_TEXTURE
   vr::Texture_t rightEyeTexture = {(void*)d3d_tex_[1], vr::API_DirectX, vr::ColorSpace_Gamma};
 #else
-	vr::Texture_t rightEyeTexture = {(void*)rightEyeDesc[cur_frame_buffer_].m_nResolveTextureId, vr::API_OpenGL, vr::ColorSpace_Gamma};
+	vr::Texture_t rightEyeTexture = {(void*)rightEyeDesc[cur_frame_buffer_].m_nRenderTextureId, vr::API_OpenGL, vr::ColorSpace_Gamma};
 #endif
   {
     ScopedTimer timer(submit1_buffer_, "Submit1");
     //glColor3b(100, 100, 1);
-		vr::VRCompositor()->Submit(vr::Eye_Right, &rightEyeTexture );
+		vr::VRCompositor()->Submit(vr::Eye_Right, &rightEyeTexture);
   }
 #endif
 
