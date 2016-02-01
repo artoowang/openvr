@@ -235,14 +235,14 @@ private: // OpenGL bookkeeping
   // DirectX related.
   ID3D11Device* d3d_device_;
   ID3D11DeviceContext* d3d_context_;
-  ID3D11Texture2D* d3d_tex_;
-  GLuint d3d_tex_gl_id_;
-  HANDLE d3d_tex_handle_;
+  ID3D11Texture2D* d3d_tex_[2];
+  GLuint d3d_tex_gl_id_[2];
+  HANDLE d3d_tex_handle_[2];
   HANDLE d3d_handle_;
 
   bool InitDX();
   void ReleaseDX();
-  void CopyToD3DTexture(GLuint gl_tex);
+  void CopyToD3DTexture(GLuint gl_texs[2]);
 };
 
 //-----------------------------------------------------------------------------
@@ -299,9 +299,6 @@ CMainApplication::CMainApplication( int argc, char *argv[] )
   , cur_frame_buffer_(0)
   , d3d_device_(nullptr)
   , d3d_context_(nullptr)
-  , d3d_tex_(nullptr)
-  , d3d_tex_gl_id_(0)
-  , d3d_tex_handle_(NULL)
   , d3d_handle_(NULL)
 {
 
@@ -335,6 +332,11 @@ CMainApplication::CMainApplication( int argc, char *argv[] )
 	}
 	// other initialization tasks are done in BInit
 	memset(m_rDevClassChar, 0, sizeof(m_rDevClassChar));
+
+  // DirectX related.
+  d3d_tex_[0] = d3d_tex_[1] = nullptr;
+  d3d_tex_gl_id_[0] = d3d_tex_gl_id_[1] = 0;
+  d3d_tex_handle_[0] = d3d_tex_handle_[1] = NULL;
 };
 
 
@@ -797,16 +799,18 @@ void CMainApplication::RenderFrame()
 
   {
     ScopedTimer timer(present_buffer_, "Test");
-    CopyToD3DTexture(leftEyeDesc[cur_frame_buffer_].m_nRenderTextureId);
-    CopyToD3DTexture(rightEyeDesc[cur_frame_buffer_].m_nRenderTextureId);
+    GLuint texs[2] = {
+      leftEyeDesc[cur_frame_buffer_].m_nRenderTextureId,
+      rightEyeDesc[cur_frame_buffer_].m_nRenderTextureId
+    };
+    CopyToD3DTexture(texs);
     //glFinish();
   }
 
 #ifdef USE_OPENVR
   //dprintf("Submit left eye: %d\n", leftEyeDesc[cur_frame_buffer_].m_nResolveTextureId);
 #ifdef USE_DIRECTX_TEXTURE
-  CopyToD3DTexture(leftEyeDesc[cur_frame_buffer_].m_nRenderTextureId);
-  vr::Texture_t leftEyeTexture = {(void*)d3d_tex_, vr::API_DirectX, vr::ColorSpace_Gamma};
+  vr::Texture_t leftEyeTexture = {(void*)d3d_tex_[0], vr::API_DirectX, vr::ColorSpace_Gamma};
 #else
 	vr::Texture_t leftEyeTexture = {(void*)leftEyeDesc[cur_frame_buffer_].m_nResolveTextureId, vr::API_OpenGL, vr::ColorSpace_Gamma};
 #endif
@@ -818,8 +822,7 @@ void CMainApplication::RenderFrame()
 
   //dprintf("Submit right eye: %d\n", rightEyeDesc[cur_frame_buffer_].m_nResolveTextureId);
 #ifdef USE_DIRECTX_TEXTURE
-  CopyToD3DTexture(rightEyeDesc[cur_frame_buffer_].m_nRenderTextureId);
-  vr::Texture_t rightEyeTexture = {(void*)d3d_tex_, vr::API_DirectX, vr::ColorSpace_Gamma};
+  vr::Texture_t rightEyeTexture = {(void*)d3d_tex_[1], vr::API_DirectX, vr::ColorSpace_Gamma};
 #else
 	vr::Texture_t rightEyeTexture = {(void*)rightEyeDesc[cur_frame_buffer_].m_nResolveTextureId, vr::API_OpenGL, vr::ColorSpace_Gamma};
 #endif
@@ -2100,62 +2103,62 @@ bool CMainApplication::InitDX() {
   if ((d3d_handle_ = wglDXOpenDeviceNV(d3d_device_)) == NULL)
     return false;
 
-  // Create DX surface.
-  D3D11_TEXTURE2D_DESC desc;
-  ZeroMemory(&desc, sizeof(desc));
-  // TODO: review whether the settings below are suitable.
-  desc.Width = m_nRenderWidth;
-  desc.Height = m_nRenderHeight;
-  desc.MipLevels = 1;
-  desc.ArraySize = 1;
-  desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
-  desc.SampleDesc.Count = 1;
-  desc.SampleDesc.Quality = 0;
-  desc.Usage = D3D11_USAGE_DEFAULT;
-  desc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
-  desc.CPUAccessFlags = 0;
-  hr = d3d_device_->CreateTexture2D(&desc, NULL, (ID3D11Texture2D**)&d3d_tex_);
-  if (FAILED(hr)) {
-    return false;
+  for (int i = 0; i < 2; ++i) {
+    // Create DX surface.
+    D3D11_TEXTURE2D_DESC desc;
+    ZeroMemory(&desc, sizeof(desc));
+    // TODO: review whether the settings below are suitable.
+    desc.Width = m_nRenderWidth;
+    desc.Height = m_nRenderHeight;
+    desc.MipLevels = 1;
+    desc.ArraySize = 1;
+    desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
+    desc.SampleDesc.Count = 1;
+    desc.SampleDesc.Quality = 0;
+    desc.Usage = D3D11_USAGE_DEFAULT;
+    desc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+    desc.CPUAccessFlags = 0;
+    hr = d3d_device_->CreateTexture2D(&desc, NULL, &(d3d_tex_[i]));
+    if (FAILED(hr)) {
+      return false;
+    }
+
+    // Create GL texture
+    glGenTextures(1, &(d3d_tex_gl_id_[i]));
+    if ((d3d_tex_handle_[i] = wglDXRegisterObjectNV(
+        d3d_handle_, d3d_tex_[i], d3d_tex_gl_id_[i], GL_TEXTURE_2D,
+        WGL_ACCESS_WRITE_DISCARD_NV)) == NULL)
+      return false;
   }
-
-  // Create GL texture
-  glGenTextures(1, &d3d_tex_gl_id_);
-  if ((d3d_tex_handle_ = wglDXRegisterObjectNV(
-      d3d_handle_, d3d_tex_, d3d_tex_gl_id_, GL_TEXTURE_2D,
-      WGL_ACCESS_WRITE_DISCARD_NV)) == NULL)
-    return false;
-
-  // TODO: Test
-  /*if (!wglDXLockObjectsNV(d3d_handle_, 1, &d3d_tex_handle_))
-    return false;
-  glBindTexture(GL_TEXTURE_2D, d3d_tex_gl_id_);
-  glCopyImageSubData(leftEyeDesc[0].m_nRenderTextureId, GL_TEXTURE_2D, 0, 0, 0, 0,
-                     d3d_tex_gl_id_, GL_TEXTURE_2D, 0, 0, 0, 0,
-                     m_nRenderWidth, m_nRenderHeight, 1);
-  if (!wglDXUnlockObjectsNV(d3d_handle_, 1, &d3d_tex_handle_))
-    return false;*/
 
   return true;
 }
 
 void CMainApplication::ReleaseDX() {
   // TODO: This crashed for unknown reason.
-  //if (d3d_tex_handle_) wglDXUnregisterObjectNV(d3d_handle_, d3d_tex_handle_);
+  //for (int i = 0; i < 2; ++i) {
+  //  if (d3d_tex_handle_)
+  //    wglDXUnregisterObjectNV(d3d_handle_, d3d_tex_handle_[i]);
+  //}
   if (d3d_handle_) wglDXCloseDeviceNV(d3d_handle_);
 
-  if (d3d_tex_) d3d_tex_->Release();
+  for (int i = 0; i < 2; ++i) {
+    if (d3d_tex_[i])
+      d3d_tex_[i]->Release();
+  }
   if (d3d_context_) d3d_context_->Release();
   if (d3d_device_) d3d_device_->Release();
 }
 
-void CMainApplication::CopyToD3DTexture(GLuint gl_tex) {
-  if (wglDXLockObjectsNV(d3d_handle_, 1, &d3d_tex_handle_)) {
+void CMainApplication::CopyToD3DTexture(GLuint gl_texs[2]) {
+  if (wglDXLockObjectsNV(d3d_handle_, 2, d3d_tex_handle_)) {
     //glBindTexture(GL_TEXTURE_2D, d3d_tex_gl_id_);  // TODO: is this necessary?
-    glCopyImageSubData(gl_tex, GL_TEXTURE_2D, 0, 0, 0, 0,
-                       d3d_tex_gl_id_, GL_TEXTURE_2D, 0, 0, 0, 0,
-                       m_nRenderWidth, m_nRenderHeight, 1);
-    if (!wglDXUnlockObjectsNV(d3d_handle_, 1, &d3d_tex_handle_))
+    for (int i = 0; i < 2; ++i) {
+      glCopyImageSubData(gl_texs[i], GL_TEXTURE_2D, 0, 0, 0, 0,
+                         d3d_tex_gl_id_[i], GL_TEXTURE_2D, 0, 0, 0, 0,
+                         m_nRenderWidth, m_nRenderHeight, 1);
+    }
+    if (!wglDXUnlockObjectsNV(d3d_handle_, 2, d3d_tex_handle_))
       dprintf("wglDXUnlockObjectsNV() failed.\n");
   } else {
     dprintf("wglDXLockObjectsNV() failed.\n");
