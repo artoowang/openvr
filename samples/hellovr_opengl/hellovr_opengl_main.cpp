@@ -19,9 +19,6 @@
 
 #include "nvToolsExt.h"
 
-#define USE_OPENVR
-#define USE_DIRECTX_TEXTURE
-
 // Definitions from NV_DX_interop.
 #define WGL_ACCESS_WRITE_DISCARD_NV 0x0002
 
@@ -281,11 +278,7 @@ CMainApplication::CMainApplication( int argc, char *argv[] )
 	, m_bDebugOpenGL( false )
 	, m_bVerbose( false )
 	, m_bPerf( false )
-#ifdef USE_OPENVR
-  , m_bVblank( false )
-#else
 	, m_bVblank( true )
-#endif
 	, m_bGlFinishHack( true )
 	, m_glControllerVertBuffer( 0 )
 	, m_unControllerVAO( 0 )
@@ -384,34 +377,6 @@ bool CMainApplication::BInit()
 		return false;
 	}
 
-#ifdef USE_OPENVR
-	// Loading the SteamVR Runtime
-	vr::EVRInitError eError = vr::VRInitError_None;
-	m_pHMD = vr::VR_Init( &eError, vr::VRApplication_Scene );
-
-	if ( eError != vr::VRInitError_None )
-	{
-		m_pHMD = NULL;
-		char buf[1024];
-		sprintf_s( buf, sizeof( buf ), "Unable to init VR runtime: %s", vr::VR_GetVRInitErrorAsEnglishDescription( eError ) );
-		SDL_ShowSimpleMessageBox( SDL_MESSAGEBOX_ERROR, "VR_Init Failed", buf, NULL );
-		return false;
-	}
-
-
-	m_pRenderModels = (vr::IVRRenderModels *)vr::VR_GetGenericInterface( vr::IVRRenderModels_Version, &eError );
-	if( !m_pRenderModels )
-	{
-		m_pHMD = NULL;
-		vr::VR_Shutdown();
-
-		char buf[1024];
-		sprintf_s( buf, sizeof( buf ), "Unable to get render model interface: %s", vr::VR_GetVRInitErrorAsEnglishDescription( eError ) );
-		SDL_ShowSimpleMessageBox( SDL_MESSAGEBOX_ERROR, "VR_Init Failed", buf, NULL );
-		return false;
-	}
-#endif
-
 	int nWindowPosX = 700;
 	int nWindowPosY = 100;
 	m_nWindowWidth = 1280;
@@ -461,11 +426,6 @@ bool CMainApplication::BInit()
 	m_strDriver = "No Driver";
 	m_strDisplay = "No Display";
 
-#ifdef USE_OPENVR
-	m_strDriver = GetTrackedDeviceString( m_pHMD, vr::k_unTrackedDeviceIndex_Hmd, vr::Prop_TrackingSystemName_String );
-	m_strDisplay = GetTrackedDeviceString( m_pHMD, vr::k_unTrackedDeviceIndex_Hmd, vr::Prop_SerialNumber_String );
-#endif
-
 	std::string strWindowTitle = "hellovr_sdl - " + m_strDriver + " " + m_strDisplay;
 	SDL_SetWindowTitle( m_pWindow, strWindowTitle.c_str() );
 	
@@ -491,14 +451,6 @@ bool CMainApplication::BInit()
 		printf("%s - Unable to initialize OpenGL!\n", __FUNCTION__);
 		return false;
 	}
-
-#ifdef USE_OPENVR
-	if (!BInitCompositor())
-	{
-		printf("%s - Failed to initialize VR Compositor!\n", __FUNCTION__);
-		return false;
-	}
-#endif
 
   // This needs to be called last since it uses other member variables.
   if (!InitDX()) {
@@ -681,25 +633,6 @@ bool CMainApplication::HandleInput()
 		}
 	}
 
-#ifdef USE_OPENVR
-	// Process SteamVR events
-	vr::VREvent_t event;
-	while( m_pHMD->PollNextEvent( &event ) )
-	{
-		ProcessVREvent( event );
-	}
-
-	// Process SteamVR controller state
-	for( vr::TrackedDeviceIndex_t unDevice = 0; unDevice < vr::k_unMaxTrackedDeviceCount; unDevice++ )
-	{
-		vr::VRControllerState_t state;
-		if( m_pHMD->GetControllerState( unDevice, &state ) )
-		{
-			m_rbShowTrackedDevice[ unDevice ] = state.ulButtonPressed == 0;
-		}
-	}
-#endif
-
 	return bRet;
 }
 
@@ -791,13 +724,7 @@ class ScopedTimer {
 void CMainApplication::RenderFrame()
 {
   NvtxRangePushColored("RenderFrame", 0xFFAA0000);
-	// for now as fast as possible
-	//DrawControllers();
 	RenderStereoTargets();
-	//RenderDistortion();
-
-  // TODO: try sleep 3ms before submitting and see if Submit() still stalls.
-  //SleepNMilliseconds(3.0);
 
   // This is to force rendering happen before we attempt to lock DX object.
   glFlush();
@@ -809,34 +736,7 @@ void CMainApplication::RenderFrame()
       rightEyeDesc[cur_frame_buffer_].m_nRenderTextureId
     };
     CopyToD3DTexture(texs);
-    //glFinish();
   }
-
-#ifdef USE_OPENVR
-  //dprintf("Submit left eye: %d\n", leftEyeDesc[cur_frame_buffer_].m_nResolveTextureId);
-#ifdef USE_DIRECTX_TEXTURE
-  vr::Texture_t leftEyeTexture = {(void*)d3d_tex_[0], vr::API_DirectX, vr::ColorSpace_Gamma};
-#else
-	vr::Texture_t leftEyeTexture = {(void*)leftEyeDesc[cur_frame_buffer_].m_nRenderTextureId, vr::API_OpenGL, vr::ColorSpace_Gamma};
-#endif
-  {
-    ScopedTimer timer(submit0_buffer_, "Submit0");
-    //glColor3b(100, 100, 0); // This is for gDEBugger
-		vr::VRCompositor()->Submit(vr::Eye_Left, &leftEyeTexture);
-  }
-
-  //dprintf("Submit right eye: %d\n", rightEyeDesc[cur_frame_buffer_].m_nResolveTextureId);
-#ifdef USE_DIRECTX_TEXTURE
-  vr::Texture_t rightEyeTexture = {(void*)d3d_tex_[1], vr::API_DirectX, vr::ColorSpace_Gamma};
-#else
-	vr::Texture_t rightEyeTexture = {(void*)rightEyeDesc[cur_frame_buffer_].m_nRenderTextureId, vr::API_OpenGL, vr::ColorSpace_Gamma};
-#endif
-  {
-    ScopedTimer timer(submit1_buffer_, "Submit1");
-    //glColor3b(100, 100, 1);
-		vr::VRCompositor()->Submit(vr::Eye_Right, &rightEyeTexture);
-  }
-#endif
 
 	if ( m_bVblank && m_bGlFinishHack )
 	{
@@ -1276,102 +1176,6 @@ void CMainApplication::AddCubeToScene( Matrix4 mat, std::vector<float> &vertdata
 //-----------------------------------------------------------------------------
 void CMainApplication::DrawControllers()
 {
-#ifdef USE_OPENVR
-	// don't draw controllers if somebody else has input focus
-	if( m_pHMD->IsInputFocusCapturedByAnotherProcess() )
-		return;
-
-	std::vector<float> vertdataarray;
-
-	m_uiControllerVertcount = 0;
-	m_iTrackedControllerCount = 0;
-
-	for ( vr::TrackedDeviceIndex_t unTrackedDevice = vr::k_unTrackedDeviceIndex_Hmd + 1; unTrackedDevice < vr::k_unMaxTrackedDeviceCount; ++unTrackedDevice )
-	{
-		if ( !m_pHMD->IsTrackedDeviceConnected( unTrackedDevice ) )
-			continue;
-
-		if( m_pHMD->GetTrackedDeviceClass( unTrackedDevice ) != vr::TrackedDeviceClass_Controller )
-			continue;
-
-		m_iTrackedControllerCount += 1;
-
-		if( !m_rTrackedDevicePose[ unTrackedDevice ].bPoseIsValid )
-			continue;
-
-		const Matrix4 & mat = m_rmat4DevicePose[unTrackedDevice];
-
-		Vector4 center = mat * Vector4( 0, 0, 0, 1 );
-
-		for ( int i = 0; i < 3; ++i )
-		{
-			Vector3 color( 0, 0, 0 );
-			Vector4 point( 0, 0, 0, 1 );
-			point[i] += 0.05f;  // offset in X, Y, Z
-			color[i] = 1.0;  // R, G, B
-			point = mat * point;
-			vertdataarray.push_back( center.x );
-			vertdataarray.push_back( center.y );
-			vertdataarray.push_back( center.z );
-
-			vertdataarray.push_back( color.x );
-			vertdataarray.push_back( color.y );
-			vertdataarray.push_back( color.z );
-		
-			vertdataarray.push_back( point.x );
-			vertdataarray.push_back( point.y );
-			vertdataarray.push_back( point.z );
-		
-			vertdataarray.push_back( color.x );
-			vertdataarray.push_back( color.y );
-			vertdataarray.push_back( color.z );
-		
-			m_uiControllerVertcount += 2;
-		}
-
-		Vector4 start = mat * Vector4( 0, 0, -0.02f, 1 );
-		Vector4 end = mat * Vector4( 0, 0, -39.f, 1 );
-		Vector3 color( .92f, .92f, .71f );
-
-		vertdataarray.push_back( start.x );vertdataarray.push_back( start.y );vertdataarray.push_back( start.z );
-		vertdataarray.push_back( color.x );vertdataarray.push_back( color.y );vertdataarray.push_back( color.z );
-
-		vertdataarray.push_back( end.x );vertdataarray.push_back( end.y );vertdataarray.push_back( end.z );
-		vertdataarray.push_back( color.x );vertdataarray.push_back( color.y );vertdataarray.push_back( color.z );
-		m_uiControllerVertcount += 2;
-	}
-
-	// Setup the VAO the first time through.
-	if ( m_unControllerVAO == 0 )
-	{
-		glGenVertexArrays( 1, &m_unControllerVAO );
-		glBindVertexArray( m_unControllerVAO );
-
-		glGenBuffers( 1, &m_glControllerVertBuffer );
-		glBindBuffer( GL_ARRAY_BUFFER, m_glControllerVertBuffer );
-
-		GLuint stride = 2 * 3 * sizeof( float );
-		GLuint offset = 0;
-
-		glEnableVertexAttribArray( 0 );
-		glVertexAttribPointer( 0, 3, GL_FLOAT, GL_FALSE, stride, (const void *)offset);
-
-		offset += sizeof( Vector3 );
-		glEnableVertexAttribArray( 1 );
-		glVertexAttribPointer( 1, 3, GL_FLOAT, GL_FALSE, stride, (const void *)offset);
-
-		glBindVertexArray( 0 );
-	}
-
-	glBindBuffer( GL_ARRAY_BUFFER, m_glControllerVertBuffer );
-
-	// set vertex data if we have some
-	if( vertdataarray.size() > 0 )
-	{
-		//$ TODO: Use glBufferSubData for this...
-		glBufferData( GL_ARRAY_BUFFER, sizeof(float) * vertdataarray.size(), &vertdataarray[0], GL_STREAM_DRAW );
-	}
-#endif
 }
 
 
@@ -1380,12 +1184,6 @@ void CMainApplication::DrawControllers()
 //-----------------------------------------------------------------------------
 void CMainApplication::SetupCameras()
 {
-#ifdef USE_OPENVR
-	m_mat4ProjectionLeft = GetHMDMatrixProjectionEye( vr::Eye_Left );
-	m_mat4ProjectionRight = GetHMDMatrixProjectionEye( vr::Eye_Right );
-	m_mat4eyePosLeft = GetHMDMatrixPoseEye( vr::Eye_Left );
-	m_mat4eyePosRight = GetHMDMatrixPoseEye( vr::Eye_Right );
-#else
   // Column major.
   m_mat4ProjectionLeft.set(
     1.35799515f, 0.f, 0.f, 0.f,
@@ -1403,7 +1201,6 @@ void CMainApplication::SetupCameras()
     0.f, 1.f, 0.f, 0.f,
     0.f, 0.f, 1.f, 0.f,
     0.05f, 0.f, 0.f, 1.f);
-#endif
 }
 
 
@@ -2140,11 +1937,6 @@ bool CMainApplication::InitDX() {
 }
 
 void CMainApplication::ReleaseDX() {
-  // TODO: This crashed for unknown reason.
-  //for (int i = 0; i < 2; ++i) {
-  //  if (d3d_tex_handle_)
-  //    wglDXUnregisterObjectNV(d3d_handle_, d3d_tex_handle_[i]);
-  //}
   if (d3d_handle_) wglDXCloseDeviceNV(d3d_handle_);
 
   for (int i = 0; i < 2; ++i) {
@@ -2159,9 +1951,9 @@ void CMainApplication::CopyToD3DTexture(GLuint gl_texs[2]) {
   if (wglDXLockObjectsNV(d3d_handle_, 2, d3d_tex_handle_)) {
     //glBindTexture(GL_TEXTURE_2D, d3d_tex_gl_id_);  // TODO: is this necessary?
     for (int i = 0; i < 2; ++i) {
-      glCopyImageSubData(gl_texs[i], GL_TEXTURE_2D, 0, 0, 0, 0,
-                         d3d_tex_gl_id_[i], GL_TEXTURE_2D, 0, 0, 0, 0,
-                         m_nRenderWidth, m_nRenderHeight, 1);
+      //glCopyImageSubData(gl_texs[i], GL_TEXTURE_2D, 0, 0, 0, 0,
+      //                   d3d_tex_gl_id_[i], GL_TEXTURE_2D, 0, 0, 0, 0,
+      //                   m_nRenderWidth, m_nRenderHeight, 1);
     }
     if (!wglDXUnlockObjectsNV(d3d_handle_, 2, d3d_tex_handle_))
       dprintf("wglDXUnlockObjectsNV() failed.\n");
