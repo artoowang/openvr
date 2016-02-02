@@ -19,6 +19,8 @@
 
 #include "nvToolsExt.h"
 
+#define USE_NV_DX_interop
+
 // Definitions from NV_DX_interop.
 #define WGL_ACCESS_WRITE_DISCARD_NV 0x0002
 
@@ -233,14 +235,14 @@ private: // OpenGL bookkeeping
   // DirectX related.
   ID3D11Device* d3d_device_;
   ID3D11DeviceContext* d3d_context_;
-  ID3D11Texture2D* d3d_tex_[2];
-  GLuint d3d_tex_gl_id_[2];
-  HANDLE d3d_tex_handle_[2];
+  ID3D11Texture2D* d3d_tex_;
+  GLuint d3d_tex_gl_id_;
+  HANDLE d3d_tex_handle_;
   HANDLE d3d_handle_;
 
   bool InitDX();
   void ReleaseDX();
-  void CopyToD3DTexture(GLuint gl_texs[2]);
+  void CopyToD3DTexture(GLuint gl_tex);
 };
 
 //-----------------------------------------------------------------------------
@@ -278,7 +280,7 @@ CMainApplication::CMainApplication( int argc, char *argv[] )
 	, m_bDebugOpenGL( false )
 	, m_bVerbose( false )
 	, m_bPerf( false )
-	, m_bVblank( true )
+	, m_bVblank( false )
 	, m_bGlFinishHack( true )
 	, m_glControllerVertBuffer( 0 )
 	, m_unControllerVAO( 0 )
@@ -332,9 +334,9 @@ CMainApplication::CMainApplication( int argc, char *argv[] )
 	memset(m_rDevClassChar, 0, sizeof(m_rDevClassChar));
 
   // DirectX related.
-  d3d_tex_[0] = d3d_tex_[1] = nullptr;
-  d3d_tex_gl_id_[0] = d3d_tex_gl_id_[1] = 0;
-  d3d_tex_handle_[0] = d3d_tex_handle_[1] = NULL;
+  d3d_tex_ = nullptr;
+  d3d_tex_gl_id_ = 0;
+  d3d_tex_handle_ = NULL;
 };
 
 
@@ -374,6 +376,31 @@ bool CMainApplication::BInit()
 	if ( SDL_Init( SDL_INIT_VIDEO | SDL_INIT_TIMER ) < 0 )
 	{
 		printf("%s - SDL could not initialize! SDL Error: %s\n", __FUNCTION__, SDL_GetError());
+		return false;
+	}
+  
+	// Loading the SteamVR Runtime
+	vr::EVRInitError eError = vr::VRInitError_None;
+	m_pHMD = vr::VR_Init( &eError, vr::VRApplication_Scene );
+
+	if ( eError != vr::VRInitError_None )
+	{
+		m_pHMD = NULL;
+		char buf[1024];
+		sprintf_s( buf, sizeof( buf ), "Unable to init VR runtime: %s", vr::VR_GetVRInitErrorAsEnglishDescription( eError ) );
+		SDL_ShowSimpleMessageBox( SDL_MESSAGEBOX_ERROR, "VR_Init Failed", buf, NULL );
+		return false;
+	}
+
+  m_pRenderModels = (vr::IVRRenderModels *)vr::VR_GetGenericInterface( vr::IVRRenderModels_Version, &eError );
+	if( !m_pRenderModels )
+	{
+		m_pHMD = NULL;
+		vr::VR_Shutdown();
+
+		char buf[1024];
+		sprintf_s( buf, sizeof( buf ), "Unable to get render model interface: %s", vr::VR_GetVRInitErrorAsEnglishDescription( eError ) );
+		SDL_ShowSimpleMessageBox( SDL_MESSAGEBOX_ERROR, "VR_Init Failed", buf, NULL );
 		return false;
 	}
 
@@ -426,6 +453,9 @@ bool CMainApplication::BInit()
 	m_strDriver = "No Driver";
 	m_strDisplay = "No Display";
 
+	m_strDriver = GetTrackedDeviceString( m_pHMD, vr::k_unTrackedDeviceIndex_Hmd, vr::Prop_TrackingSystemName_String );
+	m_strDisplay = GetTrackedDeviceString( m_pHMD, vr::k_unTrackedDeviceIndex_Hmd, vr::Prop_SerialNumber_String );
+
 	std::string strWindowTitle = "hellovr_sdl - " + m_strDriver + " " + m_strDisplay;
 	SDL_SetWindowTitle( m_pWindow, strWindowTitle.c_str() );
 	
@@ -449,6 +479,12 @@ bool CMainApplication::BInit()
 	if (!BInitGL())
 	{
 		printf("%s - Unable to initialize OpenGL!\n", __FUNCTION__);
+		return false;
+	}
+
+	if (!BInitCompositor())
+	{
+		printf("%s - Failed to initialize VR Compositor!\n", __FUNCTION__);
 		return false;
 	}
 
@@ -633,6 +669,23 @@ bool CMainApplication::HandleInput()
 		}
 	}
 
+	// Process SteamVR events
+	vr::VREvent_t event;
+	while( m_pHMD->PollNextEvent( &event ) )
+	{
+		ProcessVREvent( event );
+	}
+
+	// Process SteamVR controller state
+	for( vr::TrackedDeviceIndex_t unDevice = 0; unDevice < vr::k_unMaxTrackedDeviceCount; unDevice++ )
+	{
+		vr::VRControllerState_t state;
+		if( m_pHMD->GetControllerState( unDevice, &state ) )
+		{
+			m_rbShowTrackedDevice[ unDevice ] = state.ulButtonPressed == 0;
+		}
+	}
+
 	return bRet;
 }
 
@@ -726,16 +779,22 @@ void CMainApplication::RenderFrame()
   NvtxRangePushColored("RenderFrame", 0xFFAA0000);
 	RenderStereoTargets();
 
-  // This is to force rendering happen before we attempt to lock DX object.
-  glFlush();
-
+#ifdef USE_NV_DX_interop
+  CopyToD3DTexture(leftEyeDesc[cur_frame_buffer_].m_nRenderTextureId);
+#endif
+  vr::Texture_t leftEyeTexture = {(void*)d3d_tex_, vr::API_DirectX, vr::ColorSpace_Gamma};
   {
-    ScopedTimer timer(present_buffer_, "Test");
-    GLuint texs[2] = {
-      leftEyeDesc[cur_frame_buffer_].m_nRenderTextureId,
-      rightEyeDesc[cur_frame_buffer_].m_nRenderTextureId
-    };
-    CopyToD3DTexture(texs);
+    ScopedTimer timer(submit0_buffer_, "Submit0");
+		vr::VRCompositor()->Submit(vr::Eye_Left, &leftEyeTexture);
+  }
+
+#ifdef USE_NV_DX_interop
+  CopyToD3DTexture(rightEyeDesc[cur_frame_buffer_].m_nRenderTextureId);
+#endif
+  vr::Texture_t rightEyeTexture = {(void*)d3d_tex_, vr::API_DirectX, vr::ColorSpace_Gamma};
+  {
+    ScopedTimer timer(submit1_buffer_, "Submit1");
+		vr::VRCompositor()->Submit(vr::Eye_Right, &rightEyeTexture);
   }
 
 	if ( m_bVblank && m_bGlFinishHack )
@@ -1184,23 +1243,10 @@ void CMainApplication::DrawControllers()
 //-----------------------------------------------------------------------------
 void CMainApplication::SetupCameras()
 {
-  // Column major.
-  m_mat4ProjectionLeft.set(
-    1.35799515f, 0.f, 0.f, 0.f,
-    0.f, 2.41421342f, 0.f, 0.f,
-    0.f, 0.f, -1.00200200f, -1.f,
-    0.f, 0.f, -2.00200200f, 0.f);
-  m_mat4ProjectionRight = m_mat4ProjectionLeft;
-  m_mat4eyePosLeft.set(
-    1.f, 0.f, 0.f, 0.f,
-    0.f, 1.f, 0.f, 0.f,
-    0.f, 0.f, 1.f, 0.f,
-    -0.05f, 0.f, 0.f, 1.f);
-  m_mat4eyePosRight.set(
-    1.f, 0.f, 0.f, 0.f,
-    0.f, 1.f, 0.f, 0.f,
-    0.f, 0.f, 1.f, 0.f,
-    0.05f, 0.f, 0.f, 1.f);
+	m_mat4ProjectionLeft = GetHMDMatrixProjectionEye( vr::Eye_Left );
+	m_mat4ProjectionRight = GetHMDMatrixProjectionEye( vr::Eye_Right );
+	m_mat4eyePosLeft = GetHMDMatrixPoseEye( vr::Eye_Left );
+	m_mat4eyePosRight = GetHMDMatrixPoseEye( vr::Eye_Right );
 }
 
 
@@ -1246,8 +1292,8 @@ bool CMainApplication::SetupStereoRenderTargets()
   if (m_pHMD) {
 	  m_pHMD->GetRecommendedRenderTargetSize( &m_nRenderWidth, &m_nRenderHeight );
   } else {
-    m_nRenderWidth = 500;
-    m_nRenderHeight = 500;
+    m_nRenderWidth = 1512;
+    m_nRenderHeight = 1680;
   }
 
   dprintf("Create left eye frame buffer ...\n");
@@ -1902,60 +1948,54 @@ bool CMainApplication::InitDX() {
       !wglDXUnregisterObjectNV || !wglDXLockObjectsNV || !wglDXUnlockObjectsNV)
     return false;
 
+  // Create DX surface.
+  D3D11_TEXTURE2D_DESC desc;
+  ZeroMemory(&desc, sizeof(desc));
+  // TODO: review whether the settings below are suitable.
+  desc.Width = m_nRenderWidth;
+  desc.Height = m_nRenderHeight;
+  desc.MipLevels = 1;
+  desc.ArraySize = 1;
+  desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
+  desc.SampleDesc.Count = 1;
+  desc.SampleDesc.Quality = 0;
+  desc.Usage = D3D11_USAGE_DEFAULT;
+  desc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+  desc.CPUAccessFlags = 0;
+  hr = d3d_device_->CreateTexture2D(&desc, NULL, &d3d_tex_);
+  if (FAILED(hr)) {
+    return false;
+  }
+
+#ifdef USE_NV_DX_interop
   if ((d3d_handle_ = wglDXOpenDeviceNV(d3d_device_)) == NULL)
     return false;
 
-  for (int i = 0; i < 2; ++i) {
-    // Create DX surface.
-    D3D11_TEXTURE2D_DESC desc;
-    ZeroMemory(&desc, sizeof(desc));
-    // TODO: review whether the settings below are suitable.
-    desc.Width = m_nRenderWidth;
-    desc.Height = m_nRenderHeight;
-    desc.MipLevels = 1;
-    desc.ArraySize = 1;
-    desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
-    desc.SampleDesc.Count = 1;
-    desc.SampleDesc.Quality = 0;
-    desc.Usage = D3D11_USAGE_DEFAULT;
-    desc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
-    desc.CPUAccessFlags = 0;
-    hr = d3d_device_->CreateTexture2D(&desc, NULL, &(d3d_tex_[i]));
-    if (FAILED(hr)) {
-      return false;
-    }
-
-    // Create GL texture
-    glGenTextures(1, &(d3d_tex_gl_id_[i]));
-    if ((d3d_tex_handle_[i] = wglDXRegisterObjectNV(
-        d3d_handle_, d3d_tex_[i], d3d_tex_gl_id_[i], GL_TEXTURE_2D,
-        WGL_ACCESS_WRITE_DISCARD_NV)) == NULL)
-      return false;
-  }
+  // Create GL texture
+  glGenTextures(1, &d3d_tex_gl_id_);
+  if ((d3d_tex_handle_ = wglDXRegisterObjectNV(
+      d3d_handle_, d3d_tex_, d3d_tex_gl_id_, GL_TEXTURE_2D,
+      WGL_ACCESS_WRITE_DISCARD_NV)) == NULL)
+    return false;
+#endif
 
   return true;
 }
 
 void CMainApplication::ReleaseDX() {
   if (d3d_handle_) wglDXCloseDeviceNV(d3d_handle_);
-
-  for (int i = 0; i < 2; ++i) {
-    if (d3d_tex_[i])
-      d3d_tex_[i]->Release();
-  }
+  if (d3d_tex_) d3d_tex_->Release();
   if (d3d_context_) d3d_context_->Release();
   if (d3d_device_) d3d_device_->Release();
 }
 
-void CMainApplication::CopyToD3DTexture(GLuint gl_texs[2]) {
-  if (wglDXLockObjectsNV(d3d_handle_, 2, d3d_tex_handle_)) {
+void CMainApplication::CopyToD3DTexture(GLuint gl_tex) {
+  if (wglDXLockObjectsNV(d3d_handle_, 1, &d3d_tex_handle_)) {
     //glBindTexture(GL_TEXTURE_2D, d3d_tex_gl_id_);  // TODO: is this necessary?
-    for (int i = 0; i < 2; ++i) {
-      //glCopyImageSubData(gl_texs[i], GL_TEXTURE_2D, 0, 0, 0, 0,
-      //                   d3d_tex_gl_id_[i], GL_TEXTURE_2D, 0, 0, 0, 0,
-      //                   m_nRenderWidth, m_nRenderHeight, 1);
-    }
-    if (!wglDXUnlockObjectsNV(d3d_handle_, 2, d3d_tex_handle_))
+    glCopyImageSubData(gl_tex, GL_TEXTURE_2D, 0, 0, 0, 0,
+                       d3d_tex_gl_id_, GL_TEXTURE_2D, 0, 0, 0, 0,
+                       m_nRenderWidth, m_nRenderHeight, 1);
+    if (!wglDXUnlockObjectsNV(d3d_handle_, 1, &d3d_tex_handle_))
       dprintf("wglDXUnlockObjectsNV() failed.\n");
   } else {
     dprintf("wglDXLockObjectsNV() failed.\n");
