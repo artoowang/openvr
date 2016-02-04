@@ -11,26 +11,13 @@
 
 #include <openvr.h>
 
-#include <d3d11_1.h>
-
 #include "shared/lodepng.h"
 #include "shared/Matrices.h"
 #include "shared/pathtools.h"
 
 #include "nvToolsExt.h"
 
-#define USE_OPENVR
-#define USE_DIRECTX_TEXTURE
-
-// Definitions from NV_DX_interop.
-#define WGL_ACCESS_WRITE_DISCARD_NV 0x0002
-
-HANDLE (WINAPI *wglDXOpenDeviceNV)(void *dxDevice) = nullptr;
-BOOL (WINAPI *wglDXCloseDeviceNV)(HANDLE hDevice) = nullptr;
-HANDLE (WINAPI *wglDXRegisterObjectNV)(HANDLE hDevice, void *dxObject, GLuint name, GLenum type, GLenum access) = nullptr;
-BOOL (WINAPI *wglDXUnregisterObjectNV)(HANDLE hDevice, HANDLE hObject) = nullptr;
-BOOL (WINAPI *wglDXLockObjectsNV)(HANDLE hDevice, GLint count, HANDLE *hObjects) = nullptr;
-BOOL (WINAPI *wglDXUnlockObjectsNV)(HANDLE hDevice, GLint count, HANDLE *hObjects) = nullptr;
+//#define USE_OPENVR
 
 int NvtxRangePushColored(const char *msg, uint32_t color) {
   nvtxEventAttributes_t eventAttrib = { 0 };
@@ -232,18 +219,6 @@ private: // OpenGL bookkeeping
   std::string present_buffer_;
   std::string submit0_buffer_;
   std::string submit1_buffer_;
-
-  // DirectX related.
-  ID3D11Device* d3d_device_;
-  ID3D11DeviceContext* d3d_context_;
-  ID3D11Texture2D* d3d_tex_[2];
-  GLuint d3d_tex_gl_id_[2];
-  HANDLE d3d_tex_handle_[2];
-  HANDLE d3d_handle_;
-
-  bool InitDX();
-  void ReleaseDX();
-  void CopyToD3DTexture(GLuint gl_texs[2]);
 };
 
 //-----------------------------------------------------------------------------
@@ -302,9 +277,6 @@ CMainApplication::CMainApplication( int argc, char *argv[] )
 	, m_strPoseClasses("")
 	, m_bShowCubes( true )
   , cur_frame_buffer_(0)
-  , d3d_device_(nullptr)
-  , d3d_context_(nullptr)
-  , d3d_handle_(NULL)
 {
 
 	for( int i = 1; i < argc; i++ )
@@ -337,11 +309,6 @@ CMainApplication::CMainApplication( int argc, char *argv[] )
 	}
 	// other initialization tasks are done in BInit
 	memset(m_rDevClassChar, 0, sizeof(m_rDevClassChar));
-
-  // DirectX related.
-  d3d_tex_[0] = d3d_tex_[1] = nullptr;
-  d3d_tex_gl_id_[0] = d3d_tex_gl_id_[1] = 0;
-  d3d_tex_handle_[0] = d3d_tex_handle_[1] = NULL;
 };
 
 
@@ -500,12 +467,6 @@ bool CMainApplication::BInit()
 	}
 #endif
 
-  // This needs to be called last since it uses other member variables.
-  if (!InitDX()) {
-    dprintf("Failed to initialize DirectX.\n");
-    return false;
-  }
-
 	return true;
 }
 
@@ -649,8 +610,6 @@ void CMainApplication::Shutdown()
   fclose(fp);
 
 	SDL_Quit();
-
-  ReleaseDX();
 }
 
 //-----------------------------------------------------------------------------
@@ -794,23 +753,13 @@ void CMainApplication::RenderFrame()
 	// for now as fast as possible
 	//DrawControllers();
 	RenderStereoTargets();
-	//RenderDistortion();
+	RenderDistortion();
 
   // TODO: try sleep 3ms before submitting and see if Submit() still stalls.
   //SleepNMilliseconds(3.0);
 
   // This is to force rendering happen before we attempt to lock DX object.
   glFlush();
-
-  {
-    ScopedTimer timer(present_buffer_, "Test");
-    GLuint texs[2] = {
-      leftEyeDesc[cur_frame_buffer_].m_nRenderTextureId,
-      rightEyeDesc[cur_frame_buffer_].m_nRenderTextureId
-    };
-    CopyToD3DTexture(texs);
-    //glFinish();
-  }
 
 #ifdef USE_OPENVR
   //dprintf("Submit left eye: %d\n", leftEyeDesc[cur_frame_buffer_].m_nResolveTextureId);
@@ -2061,111 +2010,4 @@ int main(int argc, char *argv[])
 	pMainApplication->Shutdown();
 
 	return 0;
-}
-
-//-----------------------------------------------------------------------------
-// DX11 related.
-//-----------------------------------------------------------------------------
-bool CMainApplication::InitDX() {
-  UINT createDeviceFlags = 0;
-#ifdef _DEBUG
-  createDeviceFlags |= D3D11_CREATE_DEVICE_DEBUG;
-#endif
-  HRESULT hr;
-
-  D3D_FEATURE_LEVEL featureLevels[] = {
-    D3D_FEATURE_LEVEL_11_1,
-    D3D_FEATURE_LEVEL_11_0,
-    D3D_FEATURE_LEVEL_10_1,
-    D3D_FEATURE_LEVEL_10_0,
-  };
-  UINT numFeatureLevels = ARRAYSIZE(featureLevels);
-  D3D_FEATURE_LEVEL featureLevel = D3D_FEATURE_LEVEL_11_0;
-  hr = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, createDeviceFlags, featureLevels, numFeatureLevels,
-                         D3D11_SDK_VERSION, &d3d_device_, &featureLevel, &d3d_context_);
-  if (hr == E_INVALIDARG) {
-    // DirectX 11.0 platforms will not recognize D3D_FEATURE_LEVEL_11_1 so we need to retry without it
-    hr = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, createDeviceFlags, &featureLevels[1], numFeatureLevels - 1,
-                           D3D11_SDK_VERSION, &d3d_device_, &featureLevel, &d3d_context_);
-  }
-  if (FAILED(hr))
-    return false;
-
-  // Load NV_DX_interop functions. Note the interesting way the result
-  // pointer (PROC*) is assigned to the function pointers. That is from
-  // https://www.opengl.org/discussion_boards/showthread.php/179692-avoiding-the-default-framebuffer-blit-overhead
-  *(PROC*)&wglDXOpenDeviceNV = wglGetProcAddress("wglDXOpenDeviceNV");
-  *(PROC*)&wglDXCloseDeviceNV = wglGetProcAddress("wglDXCloseDeviceNV");
-  *(PROC*)&wglDXRegisterObjectNV = wglGetProcAddress("wglDXRegisterObjectNV");
-  *(PROC*)&wglDXUnregisterObjectNV = wglGetProcAddress("wglDXUnregisterObjectNV");
-  *(PROC*)&wglDXLockObjectsNV = wglGetProcAddress("wglDXLockObjectsNV");
-  *(PROC*)&wglDXUnlockObjectsNV = wglGetProcAddress("wglDXUnlockObjectsNV");
-
-  if (!wglDXOpenDeviceNV || !wglDXCloseDeviceNV || !wglDXRegisterObjectNV ||
-      !wglDXUnregisterObjectNV || !wglDXLockObjectsNV || !wglDXUnlockObjectsNV)
-    return false;
-
-  if ((d3d_handle_ = wglDXOpenDeviceNV(d3d_device_)) == NULL)
-    return false;
-
-  for (int i = 0; i < 2; ++i) {
-    // Create DX surface.
-    D3D11_TEXTURE2D_DESC desc;
-    ZeroMemory(&desc, sizeof(desc));
-    // TODO: review whether the settings below are suitable.
-    desc.Width = m_nRenderWidth;
-    desc.Height = m_nRenderHeight;
-    desc.MipLevels = 1;
-    desc.ArraySize = 1;
-    desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
-    desc.SampleDesc.Count = 1;
-    desc.SampleDesc.Quality = 0;
-    desc.Usage = D3D11_USAGE_DEFAULT;
-    desc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
-    desc.CPUAccessFlags = 0;
-    hr = d3d_device_->CreateTexture2D(&desc, NULL, &(d3d_tex_[i]));
-    if (FAILED(hr)) {
-      return false;
-    }
-
-    // Create GL texture
-    glGenTextures(1, &(d3d_tex_gl_id_[i]));
-    if ((d3d_tex_handle_[i] = wglDXRegisterObjectNV(
-        d3d_handle_, d3d_tex_[i], d3d_tex_gl_id_[i], GL_TEXTURE_2D,
-        WGL_ACCESS_WRITE_DISCARD_NV)) == NULL)
-      return false;
-  }
-
-  return true;
-}
-
-void CMainApplication::ReleaseDX() {
-  // TODO: This crashed for unknown reason.
-  //for (int i = 0; i < 2; ++i) {
-  //  if (d3d_tex_handle_)
-  //    wglDXUnregisterObjectNV(d3d_handle_, d3d_tex_handle_[i]);
-  //}
-  if (d3d_handle_) wglDXCloseDeviceNV(d3d_handle_);
-
-  for (int i = 0; i < 2; ++i) {
-    if (d3d_tex_[i])
-      d3d_tex_[i]->Release();
-  }
-  if (d3d_context_) d3d_context_->Release();
-  if (d3d_device_) d3d_device_->Release();
-}
-
-void CMainApplication::CopyToD3DTexture(GLuint gl_texs[2]) {
-  if (wglDXLockObjectsNV(d3d_handle_, 2, d3d_tex_handle_)) {
-    //glBindTexture(GL_TEXTURE_2D, d3d_tex_gl_id_);  // TODO: is this necessary?
-    for (int i = 0; i < 2; ++i) {
-      glCopyImageSubData(gl_texs[i], GL_TEXTURE_2D, 0, 0, 0, 0,
-                         d3d_tex_gl_id_[i], GL_TEXTURE_2D, 0, 0, 0, 0,
-                         m_nRenderWidth, m_nRenderHeight, 1);
-    }
-    if (!wglDXUnlockObjectsNV(d3d_handle_, 2, d3d_tex_handle_))
-      dprintf("wglDXUnlockObjectsNV() failed.\n");
-  } else {
-    dprintf("wglDXLockObjectsNV() failed.\n");
-  }
 }
