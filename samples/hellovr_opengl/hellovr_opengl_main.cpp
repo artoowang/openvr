@@ -20,7 +20,7 @@
 #include "nvToolsExt.h"
 
 #define USE_OPENVR
-#define USE_DIRECTX_TEXTURE
+//#define USE_DIRECTX_TEXTURE
 
 // Definitions from NV_DX_interop.
 #define WGL_ACCESS_WRITE_DISCARD_NV 0x0002
@@ -800,7 +800,15 @@ void CMainApplication::RenderFrame()
   //SleepNMilliseconds(3.0);
 
   // This is to force rendering happen before we attempt to lock DX object.
-  glFlush();
+  //glFlush();
+  /*GLsync sync = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+  if (sync <= 0) {
+    dprintf("Failed to create sync: %d\n", sync);
+  } else {
+    glClientWaitSync(sync, GL_SYNC_FLUSH_COMMANDS_BIT, GL_TIMEOUT_IGNORED);
+    glDeleteSync(sync);
+  }*/
+  glFinish();
 
   {
     ScopedTimer timer(present_buffer_, "Test");
@@ -808,7 +816,7 @@ void CMainApplication::RenderFrame()
       leftEyeDesc[cur_frame_buffer_].m_nRenderTextureId,
       rightEyeDesc[cur_frame_buffer_].m_nRenderTextureId
     };
-    CopyToD3DTexture(texs);
+    //CopyToD3DTexture(texs);
     //glFinish();
   }
 
