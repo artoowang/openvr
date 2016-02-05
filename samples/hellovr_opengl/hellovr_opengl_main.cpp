@@ -1,9 +1,10 @@
 //========= Copyright Valve Corporation ============//
+#define GL_GLEXT_PROTOTYPES
+#include <GLES2/gl2.h>
+#include <GLES2/gl2ext.h>
+#include <EGL/egl.h>
+#include <EGL/eglext.h>
 
-#include <SDL.h>
-#include <GL/glew.h>
-#include <SDL_opengl.h>
-#include <gl/glu.h>
 #include <windows.h>
 #include <stdio.h>
 #include <string>
@@ -55,6 +56,7 @@ private:
 };
 
 static bool g_bPrintf = true;
+static bool g_running = true;
 
 static const int kNumBuffers = 1;
 
@@ -124,12 +126,9 @@ private:
 	Matrix4 m_rmat4DevicePose[ vr::k_unMaxTrackedDeviceCount ];
 	bool m_rbShowTrackedDevice[ vr::k_unMaxTrackedDeviceCount ];
 
-private: // SDL bookkeeping
-	SDL_Window *m_pWindow;
+private:
 	uint32_t m_nWindowWidth;
 	uint32_t m_nWindowHeight;
-
-	SDL_GLContext m_pContext;
 
 private: // OpenGL bookkeeping
 	int m_iTrackedControllerCount;
@@ -219,6 +218,14 @@ private: // OpenGL bookkeeping
   std::string present_buffer_;
   std::string submit0_buffer_;
   std::string submit1_buffer_;
+
+  // Win32 API.
+  static LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam);
+
+  bool CreateApplicationWindow(int width, int height);
+
+  EGLNativeWindowType native_window_;
+  EGLNativeDisplayType native_display_;
 };
 
 //-----------------------------------------------------------------------------
@@ -243,9 +250,7 @@ void dprintf( const char *fmt, ... )
 // Purpose: Constructor
 //-----------------------------------------------------------------------------
 CMainApplication::CMainApplication( int argc, char *argv[] )
-	: m_pWindow(NULL)
-	, m_pContext(NULL)
-	, m_nWindowWidth( 1280 )
+	: m_nWindowWidth( 1280 )
 	, m_nWindowHeight( 720 )
 	, m_unSceneProgramID( 0 )
 	, m_unLensProgramID( 0 )
@@ -277,6 +282,8 @@ CMainApplication::CMainApplication( int argc, char *argv[] )
 	, m_strPoseClasses("")
 	, m_bShowCubes( true )
   , cur_frame_buffer_(0)
+  , native_window_(NULL)
+  , native_display_(NULL)
 {
 
 	for( int i = 1; i < argc; i++ )
@@ -343,14 +350,7 @@ std::string GetTrackedDeviceString( vr::IVRSystem *pHmd, vr::TrackedDeviceIndex_
 //-----------------------------------------------------------------------------
 // Purpose:
 //-----------------------------------------------------------------------------
-bool CMainApplication::BInit()
-{
-	if ( SDL_Init( SDL_INIT_VIDEO | SDL_INIT_TIMER ) < 0 )
-	{
-		printf("%s - SDL could not initialize! SDL Error: %s\n", __FUNCTION__, SDL_GetError());
-		return false;
-	}
-
+bool CMainApplication::BInit() {
 #ifdef USE_OPENVR
 	// Loading the SteamVR Runtime
 	vr::EVRInitError eError = vr::VRInitError_None;
@@ -383,58 +383,8 @@ bool CMainApplication::BInit()
 	int nWindowPosY = 100;
 	m_nWindowWidth = 1280;
 	m_nWindowHeight = 720;
-	Uint32 unWindowFlags = SDL_WINDOW_OPENGL | SDL_WINDOW_SHOWN;
 
-	SDL_GL_SetAttribute( SDL_GL_CONTEXT_MAJOR_VERSION, 4 );
-	SDL_GL_SetAttribute( SDL_GL_CONTEXT_MINOR_VERSION, 1 );
-	//SDL_GL_SetAttribute( SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_COMPATIBILITY );
-	SDL_GL_SetAttribute( SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE );
-
-	SDL_GL_SetAttribute( SDL_GL_MULTISAMPLEBUFFERS, 0 );
-	SDL_GL_SetAttribute( SDL_GL_MULTISAMPLESAMPLES, 0 );
-	if( m_bDebugOpenGL )
-		SDL_GL_SetAttribute( SDL_GL_CONTEXT_FLAGS, SDL_GL_CONTEXT_DEBUG_FLAG );
-
-	m_pWindow = SDL_CreateWindow( "hellovr_sdl", nWindowPosX, nWindowPosY, m_nWindowWidth, m_nWindowHeight, unWindowFlags );
-	if (m_pWindow == NULL)
-	{
-		printf( "%s - Window could not be created! SDL Error: %s\n", __FUNCTION__, SDL_GetError() );
-		return false;
-	}
-
-	m_pContext = SDL_GL_CreateContext(m_pWindow);
-	if (m_pContext == NULL)
-	{
-		printf( "%s - OpenGL context could not be created! SDL Error: %s\n", __FUNCTION__, SDL_GetError() );
-		return false;
-	}
-
-	glewExperimental = GL_TRUE;
-	GLenum nGlewError = glewInit();
-	if (nGlewError != GLEW_OK)
-	{
-		printf( "%s - Error initializing GLEW! %s\n", __FUNCTION__, glewGetErrorString( nGlewError ) );
-		return false;
-	}
-	glGetError(); // to clear the error caused deep in GLEW
-
-	if ( SDL_GL_SetSwapInterval( m_bVblank ? 1 : 0 ) < 0 )
-	{
-		printf( "%s - Warning: Unable to set VSync! SDL Error: %s\n", __FUNCTION__, SDL_GetError() );
-		return false;
-	}
-
-
-	m_strDriver = "No Driver";
-	m_strDisplay = "No Display";
-
-#ifdef USE_OPENVR
-	m_strDriver = GetTrackedDeviceString( m_pHMD, vr::k_unTrackedDeviceIndex_Hmd, vr::Prop_TrackingSystemName_String );
-	m_strDisplay = GetTrackedDeviceString( m_pHMD, vr::k_unTrackedDeviceIndex_Hmd, vr::Prop_SerialNumber_String );
-#endif
-
-	std::string strWindowTitle = "hellovr_sdl - " + m_strDriver + " " + m_strDisplay;
-	SDL_SetWindowTitle( m_pWindow, strWindowTitle.c_str() );
+	CreateApplicationWindow(m_nWindowWidth, m_nWindowHeight);
 	
 	// cube array
  	m_iSceneVolumeWidth = m_iSceneVolumeInit;
@@ -449,15 +399,12 @@ bool CMainApplication::BInit()
  
  	m_iTexture = 0;
  	m_uiVertcount = 0;
- 
-// 		m_MillisecondsTimer.start(1, this);
-// 		m_SecondsTimer.start(1000, this);
 	
-	if (!BInitGL())
+	/*if (!BInitGL())
 	{
 		printf("%s - Unable to initialize OpenGL!\n", __FUNCTION__);
 		return false;
-	}
+	}*/
 
 #ifdef USE_OPENVR
 	if (!BInitCompositor())
@@ -529,8 +476,7 @@ bool CMainApplication::BInitCompositor()
 //-----------------------------------------------------------------------------
 void CMainApplication::Shutdown()
 {
-	if( m_pHMD )
-	{
+	if (m_pHMD) {
 		vr::VR_Shutdown();
 		m_pHMD = NULL;
 	}
@@ -541,7 +487,7 @@ void CMainApplication::Shutdown()
 	}
 	m_vecRenderModels.clear();
 	
-	if( m_pContext )
+	/*if( m_pContext )
 	{
 		glDebugMessageControl( GL_DONT_CARE, GL_DONT_CARE, GL_DONT_CARE, 0, nullptr, GL_FALSE );
 		glDebugMessageCallback(nullptr, nullptr);
@@ -589,12 +535,11 @@ void CMainApplication::Shutdown()
 		{
 			glDeleteVertexArrays( 1, &m_unControllerVAO );
 		}
-	}
+	}*/
 
-	if( m_pWindow )
-	{
-		SDL_DestroyWindow(m_pWindow);
-		m_pWindow = NULL;
+	if (native_window_) {
+		DestroyWindow(native_window_);
+		native_window_ = NULL;
 	}
 
   // Print trace messages.
@@ -608,8 +553,6 @@ void CMainApplication::Shutdown()
   fopen_s(&fp, "present.csv", "w");
   fprintf(fp, "%s", present_buffer_.c_str());
   fclose(fp);
-
-	SDL_Quit();
 }
 
 //-----------------------------------------------------------------------------
@@ -617,29 +560,6 @@ void CMainApplication::Shutdown()
 //-----------------------------------------------------------------------------
 bool CMainApplication::HandleInput()
 {
-	SDL_Event sdlEvent;
-	bool bRet = false;
-
-	while ( SDL_PollEvent( &sdlEvent ) != 0 )
-	{
-		if ( sdlEvent.type == SDL_QUIT )
-		{
-			bRet = true;
-		}
-		else if ( sdlEvent.type == SDL_KEYDOWN )
-		{
-			if ( sdlEvent.key.keysym.sym == SDLK_ESCAPE 
-			     || sdlEvent.key.keysym.sym == SDLK_q )
-			{
-				bRet = true;
-			}
-			if( sdlEvent.key.keysym.sym == SDLK_c )
-			{
-				m_bShowCubes = !m_bShowCubes;
-			}
-		}
-	}
-
 #ifdef USE_OPENVR
 	// Process SteamVR events
 	vr::VREvent_t event;
@@ -659,27 +579,23 @@ bool CMainApplication::HandleInput()
 	}
 #endif
 
-	return bRet;
+	return true;
 }
 
 //-----------------------------------------------------------------------------
 // Purpose:
 //-----------------------------------------------------------------------------
-void CMainApplication::RunMainLoop()
-{
-	bool bQuit = false;
+void CMainApplication::RunMainLoop() {
+	MSG msg;
+  while (g_running) {
+    if (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
+      TranslateMessage(&msg);
+      DispatchMessage(&msg);
+    }
 
-	SDL_StartTextInput();
-	SDL_ShowCursor( SDL_DISABLE );
-
-	while ( !bQuit )
-	{
-		bQuit = HandleInput();
-
-		RenderFrame();
-	}
-
-	SDL_StopTextInput();
+    //HandleInput();
+    //RenderFrame();
+  }
 }
 
 
@@ -1991,6 +1907,75 @@ void CGLRenderModel::Draw()
 	glBindVertexArray( 0 );
 }
 
+LRESULT CALLBACK CMainApplication::WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) {
+  switch (message) {
+  case WM_CLOSE:
+  case WM_DESTROY:
+    g_running = false;
+    break;
+  }
+  return DefWindowProcA(hWnd, message, wParam, lParam);
+}
+
+bool CMainApplication::CreateApplicationWindow(int width, int height) {
+  WNDCLASSEXA parentWindowClass   = {0};
+  parentWindowClass.cbSize        = sizeof(WNDCLASSEXA);
+  parentWindowClass.style         = 0;
+  parentWindowClass.lpfnWndProc   = WndProc;
+  parentWindowClass.cbClsExtra    = 0;
+  parentWindowClass.cbWndExtra    = 0;
+  parentWindowClass.hInstance     = GetModuleHandle(NULL);
+  parentWindowClass.hIcon         = NULL;
+  parentWindowClass.hCursor       = LoadCursorW(NULL, IDC_ARROW);
+  parentWindowClass.hbrBackground = 0;
+  parentWindowClass.lpszMenuName  = NULL;
+  parentWindowClass.lpszClassName = "ANGLE_window";
+  if (!RegisterClassExA(&parentWindowClass)) {
+    return false;
+  }
+
+  WNDCLASSEXA childWindowClass   = {0};
+  childWindowClass.cbSize        = sizeof(WNDCLASSEXA);
+  childWindowClass.style         = CS_OWNDC;
+  childWindowClass.lpfnWndProc   = WndProc;
+  childWindowClass.cbClsExtra    = 0;
+  childWindowClass.cbWndExtra    = 0;
+  childWindowClass.hInstance     = GetModuleHandle(NULL);
+  childWindowClass.hIcon         = NULL;
+  childWindowClass.hCursor       = LoadCursorW(NULL, IDC_ARROW);
+  childWindowClass.hbrBackground = 0;
+  childWindowClass.lpszMenuName  = NULL;
+  childWindowClass.lpszClassName = "ANGLE_window_child";
+  if (!RegisterClassExA(&childWindowClass)) {
+    return false;
+  }
+
+  DWORD parentStyle         = WS_CAPTION | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_SYSMENU;
+  DWORD parentExtendedStyle = WS_EX_APPWINDOW;
+
+  RECT sizeRect = {0, 0, static_cast<LONG>(width), static_cast<LONG>(height)};
+  AdjustWindowRectEx(&sizeRect, parentStyle, FALSE, parentExtendedStyle);
+
+  HWND parent_window =
+      CreateWindowExA(parentExtendedStyle, "ANGLE_window", "ANGLE", parentStyle,
+                      CW_USEDEFAULT, CW_USEDEFAULT, sizeRect.right - sizeRect.left,
+                      sizeRect.bottom - sizeRect.top, NULL, NULL, GetModuleHandle(NULL), this);
+
+  native_window_ = CreateWindowExA(0, "ANGLE_window_child", "ANGLE", WS_CHILD, 0, 0,
+                                  static_cast<int>(width), static_cast<int>(height),
+                                  parent_window, NULL, GetModuleHandle(NULL), this);
+
+  native_display_ = GetDC(native_window_);
+  if (!native_display_) {
+    return false;
+  }
+
+  ShowWindow(parent_window, SW_SHOW);
+  ShowWindow(native_window_, SW_SHOW);
+
+  return true;
+}
+
 
 //-----------------------------------------------------------------------------
 // Purpose:
@@ -1999,8 +1984,7 @@ int main(int argc, char *argv[])
 {
 	CMainApplication *pMainApplication = new CMainApplication( argc, argv );
 
-	if (!pMainApplication->BInit())
-	{
+	if (!pMainApplication->BInit()) {
 		pMainApplication->Shutdown();
 		return 1;
 	}

@@ -54,7 +54,7 @@
       <WarningLevel>Level3</WarningLevel>
       <Optimization>Disabled</Optimization>
       <PreprocessorDefinitions>WIN32;_CRT_NONSTDC_NO_DEPRECATE;_DEBUG;_WINDOWS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>..;../../headers;../thirdparty/glew/glew-1.11.0/include;../thirdparty/sdl2-2.0.3/include</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>..;../../headers;../thirdparty/glew/glew-1.11.0/include;../thirdparty/sdl2-2.0.3/include;C:\Users\Artoo\Documents\Programs\angle\include</AdditionalIncludeDirectories>
       <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
     </ClCompile>
     <Link>
@@ -74,7 +74,7 @@
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <PreprocessorDefinitions>WIN32;_CRT_NONSTDC_NO_DEPRECATE;NDEBUG;_WINDOWS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
-      <AdditionalIncludeDirectories>..;../../headers;../thirdparty/glew/glew-1.11.0/include;../thirdparty/sdl2-2.0.3/include</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>..;../../headers;../thirdparty/glew/glew-1.11.0/include;../thirdparty/sdl2-2.0.3/include;C:\Users\Artoo\Documents\Programs\angle\include</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
