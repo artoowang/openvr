@@ -2,6 +2,7 @@
 #define GL_GLEXT_PROTOTYPES
 #include <GLES2/gl2.h>
 #include <GLES2/gl2ext.h>
+#include <GLES3/gl32.h>
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
 
@@ -434,9 +435,10 @@ bool CMainApplication::BInitGL()
 {
 	if( m_bDebugOpenGL )
 	{
-		glDebugMessageCallback(DebugCallback, nullptr);
-		glDebugMessageControl( GL_DONT_CARE, GL_DONT_CARE, GL_DONT_CARE, 0, nullptr, GL_TRUE );
-		glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
+    // TODO: which library has these?
+		//glDebugMessageCallback(DebugCallback, nullptr);
+		//glDebugMessageControl( GL_DONT_CARE, GL_DONT_CARE, GL_DONT_CARE, 0, nullptr, GL_TRUE );
+		//glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
 	}
 
 	if( !CreateAllShaders() )
@@ -715,7 +717,7 @@ void CMainApplication::RenderFrame()
 	// SwapWindow
 	{
     NvtxRangePushColored("SDL_GL_SwapWindow", 0xFF00AA00);
-		SDL_GL_SwapWindow( m_pWindow );
+		//SDL_GL_SwapWindow( m_pWindow );
     NvtxRangePop();
 	}
 
