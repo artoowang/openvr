@@ -739,7 +739,7 @@ void CMainApplication::RunMainLoop() {
     }
 
     //HandleInput();
-    //RenderFrame();
+    RenderFrame();
   }
 }
 
@@ -860,7 +860,7 @@ void CMainApplication::RenderFrame()
 	// SwapWindow
 	{
     NvtxRangePushColored("SDL_GL_SwapWindow", 0xFF00AA00);
-		//SDL_GL_SwapWindow( m_pWindow );
+		eglSwapBuffers(display_, surface_);
     NvtxRangePop();
 	}
 
@@ -893,6 +893,8 @@ void CMainApplication::RenderFrame()
 	UpdateHMDMatrixPose();
 
   NvtxRangePop();
+
+  CheckGLError(__LINE__);
 }
 
 std::string GetShaderInfoLog(GLuint shader) {
