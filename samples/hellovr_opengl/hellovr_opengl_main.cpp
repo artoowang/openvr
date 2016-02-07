@@ -6,6 +6,7 @@
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
 
+#include <assert.h>
 #include <windows.h>
 #include <stdio.h>
 #include <string>
@@ -227,6 +228,10 @@ private: // OpenGL bookkeeping
 
   EGLNativeWindowType native_window_;
   EGLNativeDisplayType native_display_;
+  EGLConfig config_;
+  EGLDisplay display_;
+  EGLSurface surface_;
+  EGLContext context_;
 };
 
 //-----------------------------------------------------------------------------
@@ -245,6 +250,15 @@ void dprintf( const char *fmt, ... )
 		printf( "%s", buffer );
 
 	OutputDebugStringA( buffer );
+}
+
+bool CheckGLError(int line) {
+  GLenum err = glGetError();
+  if (err != GL_NO_ERROR) {
+    dprintf("line %d: glGetError(): 0x%x\n", line, err);
+    return false;
+  }
+  return true;
 }
 
 //-----------------------------------------------------------------------------
@@ -285,6 +299,9 @@ CMainApplication::CMainApplication( int argc, char *argv[] )
   , cur_frame_buffer_(0)
   , native_window_(NULL)
   , native_display_(NULL)
+  , display_(EGL_NO_DISPLAY)
+  , surface_(EGL_NO_SURFACE)
+  , context_(EGL_NO_CONTEXT)
 {
 
 	for( int i = 1; i < argc; i++ )
@@ -401,11 +418,11 @@ bool CMainApplication::BInit() {
  	m_iTexture = 0;
  	m_uiVertcount = 0;
 	
-	/*if (!BInitGL())
+	if (!BInitGL())
 	{
 		printf("%s - Unable to initialize OpenGL!\n", __FUNCTION__);
 		return false;
-	}*/
+	}
 
 #ifdef USE_OPENVR
 	if (!BInitCompositor())
@@ -433,16 +450,122 @@ void APIENTRY DebugCallback(GLenum source, GLenum type, GLuint id, GLenum severi
 //-----------------------------------------------------------------------------
 bool CMainApplication::BInitGL()
 {
-	if( m_bDebugOpenGL )
-	{
-    // TODO: which library has these?
-		//glDebugMessageCallback(DebugCallback, nullptr);
-		//glDebugMessageControl( GL_DONT_CARE, GL_DONT_CARE, GL_DONT_CARE, 0, nullptr, GL_TRUE );
-		//glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
-	}
+  PFNEGLGETPLATFORMDISPLAYEXTPROC eglGetPlatformDisplayEXT =
+      reinterpret_cast<PFNEGLGETPLATFORMDISPLAYEXTPROC>(
+          eglGetProcAddress("eglGetPlatformDisplayEXT"));
+  if (!eglGetPlatformDisplayEXT) {
+    return false;
+  }
 
-	if( !CreateAllShaders() )
+  std::vector<EGLint> displayAttributes;
+  displayAttributes.push_back(EGL_PLATFORM_ANGLE_TYPE_ANGLE);
+  displayAttributes.push_back(EGL_PLATFORM_ANGLE_TYPE_DEFAULT_ANGLE);
+  displayAttributes.push_back(EGL_PLATFORM_ANGLE_MAX_VERSION_MAJOR_ANGLE);
+  displayAttributes.push_back(EGL_DONT_CARE);
+  displayAttributes.push_back(EGL_PLATFORM_ANGLE_MAX_VERSION_MINOR_ANGLE);
+  displayAttributes.push_back(EGL_DONT_CARE);
+  displayAttributes.push_back(EGL_NONE);
+
+  display_ = eglGetPlatformDisplayEXT(EGL_PLATFORM_ANGLE_ANGLE,
+      reinterpret_cast<void *>(native_display_),
+      &displayAttributes[0]);
+  if (display_ == EGL_NO_DISPLAY) {
+    return false;
+  }
+
+  EGLint major_version, minor_version;
+  if (eglInitialize(display_, &major_version, &minor_version) == EGL_FALSE) {
+    return false;
+  }
+
+  const char* display_extensions = eglQueryString(display_, EGL_EXTENSIONS);
+
+  // EGL_KHR_create_context is required to request a non-ES2 context.
+  bool has_KHR_create_context =
+      strstr(display_extensions, "EGL_KHR_create_context") != nullptr;
+  if (major_version != 2 && minor_version != 0 && !has_KHR_create_context) {
+    return false;
+  }
+
+  eglBindAPI(EGL_OPENGL_ES_API);
+  if (eglGetError() != EGL_SUCCESS) {
+    return false;
+  }
+
+  const EGLint config_attributes[] = {
+      EGL_RED_SIZE,       EGL_DONT_CARE,
+      EGL_GREEN_SIZE,     EGL_DONT_CARE,
+      EGL_BLUE_SIZE,      EGL_DONT_CARE,
+      EGL_ALPHA_SIZE,     EGL_DONT_CARE,
+      EGL_DEPTH_SIZE,     EGL_DONT_CARE,
+      EGL_STENCIL_SIZE,   EGL_DONT_CARE,
+      EGL_SAMPLE_BUFFERS, 0,
+      EGL_NONE
+  };
+
+  EGLint config_count;
+  if (!eglChooseConfig(display_, config_attributes, &config_, 1, &config_count) || 
+      (config_count != 1)) {
+    return false;
+  }
+
+  int red_bits, green_bits, blue_bits, alpha_bits, depth_bits, stencil_bits;
+  eglGetConfigAttrib(display_, config_, EGL_RED_SIZE, &red_bits);
+  eglGetConfigAttrib(display_, config_, EGL_GREEN_SIZE, &green_bits);
+  eglGetConfigAttrib(display_, config_, EGL_BLUE_SIZE, &blue_bits);
+  eglGetConfigAttrib(display_, config_, EGL_ALPHA_SIZE, &alpha_bits);
+  eglGetConfigAttrib(display_, config_, EGL_DEPTH_SIZE, &depth_bits);
+  eglGetConfigAttrib(display_, config_, EGL_STENCIL_SIZE, &stencil_bits);
+
+  // TODO: do we need this?
+  std::vector<EGLint> surfaceAttributes;
+  if (strstr(display_extensions, "EGL_NV_post_sub_buffer") != nullptr) {
+    surfaceAttributes.push_back(EGL_POST_SUB_BUFFER_SUPPORTED_NV);
+    surfaceAttributes.push_back(EGL_TRUE);
+  }
+  surfaceAttributes.push_back(EGL_NONE);
+
+  surface_ = eglCreateWindowSurface(display_, config_, native_window_, &surfaceAttributes[0]);
+  if (eglGetError() != EGL_SUCCESS) {
+    return false;
+  }
+  assert(surface_ != EGL_NO_SURFACE);
+
+  std::vector<EGLint> contextAttributes;
+  if (has_KHR_create_context) {
+    contextAttributes.push_back(EGL_CONTEXT_MAJOR_VERSION_KHR);
+    contextAttributes.push_back(3);
+    contextAttributes.push_back(EGL_CONTEXT_MINOR_VERSION_KHR);
+    contextAttributes.push_back(0);
+    contextAttributes.push_back(EGL_CONTEXT_OPENGL_DEBUG);
+    contextAttributes.push_back(m_bDebugOpenGL ? EGL_TRUE : EGL_FALSE);
+    contextAttributes.push_back(EGL_CONTEXT_OPENGL_NO_ERROR_KHR);
+    contextAttributes.push_back(EGL_FALSE);
+  }
+  contextAttributes.push_back(EGL_NONE);
+
+  context_ = eglCreateContext(display_, config_, nullptr, &contextAttributes[0]);
+  if (eglGetError() != EGL_SUCCESS) {
+    return false;
+  }
+
+  eglMakeCurrent(display_, surface_, surface_, context_);
+  if (eglGetError() != EGL_SUCCESS) {
+    return false;
+  }
+  
+  eglSwapInterval(display_, m_bVblank ? 1 : 0);
+
+  // TODO: Cannot find symbol in ANGLE.
+  //if (m_bDebugOpenGL) {
+	//	glDebugMessageCallback(DebugCallback, nullptr);
+	//	glDebugMessageControl( GL_DONT_CARE, GL_DONT_CARE, GL_DONT_CARE, 0, nullptr, GL_TRUE );
+	//	glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
+	//}
+
+	if (!CreateAllShaders()) {
 		return false;
+  }
 
 	SetupTexturemaps();
 	SetupScene();
@@ -451,6 +574,8 @@ bool CMainApplication::BInitGL()
 	SetupDistortion();
 
 	SetupRenderModels();
+
+  CheckGLError(__LINE__);
 
 	return true;
 }
@@ -489,6 +614,24 @@ void CMainApplication::Shutdown()
 	}
 	m_vecRenderModels.clear();
 	
+  if (surface_ != EGL_NO_SURFACE) {
+    assert(display_ != EGL_NO_DISPLAY);
+    eglDestroySurface(display_, surface_);
+    surface_ = EGL_NO_SURFACE;
+  }
+
+  if (context_ != EGL_NO_CONTEXT) {
+    assert(display_ != EGL_NO_DISPLAY);
+    eglDestroyContext(display_, context_);
+    context_ = EGL_NO_CONTEXT;
+  }
+
+  if (display_ != EGL_NO_DISPLAY) {
+    eglMakeCurrent(display_, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+    eglTerminate(display_);
+    display_ = EGL_NO_DISPLAY;
+  }
+
 	/*if( m_pContext )
 	{
 		glDebugMessageControl( GL_DONT_CARE, GL_DONT_CARE, GL_DONT_CARE, 0, nullptr, GL_FALSE );
@@ -752,6 +895,27 @@ void CMainApplication::RenderFrame()
   NvtxRangePop();
 }
 
+std::string GetShaderInfoLog(GLuint shader) {
+  GLint max_length;
+  glGetShaderiv(shader, GL_INFO_LOG_LENGTH, &max_length);
+  // The max_length includes the NULL character.
+  char* shader_info_log = new char[max_length];
+  glGetShaderInfoLog(shader, max_length, &max_length, shader_info_log);
+  std::string ret = shader_info_log;
+  delete[] shader_info_log;
+  return ret;
+}
+
+std::string GetProgramInfoLog(GLuint program) {
+  GLint max_length;
+  glGetProgramiv(program, GL_INFO_LOG_LENGTH, &max_length);
+  // The max_length includes the NULL character.
+  char* program_info_log = new char[max_length];
+  glGetProgramInfoLog(program, max_length, &max_length, program_info_log);
+  std::string ret = program_info_log;
+  delete[] program_info_log;
+  return ret;
+}
 
 //-----------------------------------------------------------------------------
 // Purpose: Compiles a GL shader program and returns the handle. Returns 0 if
@@ -769,7 +933,8 @@ GLuint CMainApplication::CompileGLShader( const char *pchShaderName, const char 
 	glGetShaderiv( nSceneVertexShader, GL_COMPILE_STATUS, &vShaderCompiled);
 	if ( vShaderCompiled != GL_TRUE)
 	{
-		dprintf("%s - Unable to compile vertex shader %d!\n", pchShaderName, nSceneVertexShader);
+		dprintf("%s - Unable to compile vertex shader %d!\n%s\n", pchShaderName,
+        nSceneVertexShader, GetShaderInfoLog(nSceneVertexShader).c_str());
 		glDeleteProgram( unProgramID );
 		glDeleteShader( nSceneVertexShader );
 		return 0;
@@ -785,7 +950,8 @@ GLuint CMainApplication::CompileGLShader( const char *pchShaderName, const char 
 	glGetShaderiv( nSceneFragmentShader, GL_COMPILE_STATUS, &fShaderCompiled);
 	if (fShaderCompiled != GL_TRUE)
 	{
-		dprintf("%s - Unable to compile fragment shader %d!\n", pchShaderName, nSceneFragmentShader );
+    dprintf("%s - Unable to compile fragment shader %d!\n%s\n", pchShaderName,
+        nSceneFragmentShader, GetShaderInfoLog(nSceneFragmentShader).c_str());
 		glDeleteProgram( unProgramID );
 		glDeleteShader( nSceneFragmentShader );
 		return 0;	
@@ -800,7 +966,8 @@ GLuint CMainApplication::CompileGLShader( const char *pchShaderName, const char 
 	glGetProgramiv( unProgramID, GL_LINK_STATUS, &programSuccess);
 	if ( programSuccess != GL_TRUE )
 	{
-		dprintf("%s - Error linking program %d!\n", pchShaderName, unProgramID);
+    dprintf("%s - Error linking program %d!\n%s\n", pchShaderName,
+        unProgramID, GetProgramInfoLog(unProgramID).c_str());
 		glDeleteProgram( unProgramID );
 		return 0;
 	}
@@ -815,18 +982,16 @@ GLuint CMainApplication::CompileGLShader( const char *pchShaderName, const char 
 //-----------------------------------------------------------------------------
 // Purpose: Creates all the shaders used by HelloVR SDL
 //-----------------------------------------------------------------------------
-bool CMainApplication::CreateAllShaders()
-{
+bool CMainApplication::CreateAllShaders() {
 	m_unSceneProgramID = CompileGLShader( 
 		"Scene",
 
 		// Vertex Shader
-		"#version 410\n"
 		"uniform mat4 matrix;\n"
-		"layout(location = 0) in vec4 position;\n"
-		"layout(location = 1) in vec2 v2UVcoordsIn;\n"
-		"layout(location = 2) in vec3 v3NormalIn;\n"
-		"out vec2 v2UVcoords;\n"
+		"attribute vec4 position;\n"
+		"attribute vec2 v2UVcoordsIn;\n"
+		"attribute vec3 v3NormalIn;\n"
+		"varying vec2 v2UVcoords;\n"
 		"void main()\n"
 		"{\n"
 		"	v2UVcoords = v2UVcoordsIn;\n"
@@ -834,13 +999,12 @@ bool CMainApplication::CreateAllShaders()
 		"}\n",
 
 		// Fragment Shader
-		"#version 410 core\n"
+    "precision highp float;\n"
 		"uniform sampler2D mytexture;\n"
-		"in vec2 v2UVcoords;\n"
-		"out vec4 outputColor;\n"
+		"varying vec2 v2UVcoords;\n"
 		"void main()\n"
 		"{\n"
-		"   outputColor = texture(mytexture, v2UVcoords);\n"
+		"   gl_FragColor = texture2D(mytexture, v2UVcoords);\n"
 		"}\n"
 		);
 	m_nSceneMatrixLocation = glGetUniformLocation( m_unSceneProgramID, "matrix" );
@@ -854,11 +1018,10 @@ bool CMainApplication::CreateAllShaders()
 		"Controller",
 
 		// vertex shader
-		"#version 410\n"
 		"uniform mat4 matrix;\n"
-		"layout(location = 0) in vec4 position;\n"
-		"layout(location = 1) in vec3 v3ColorIn;\n"
-		"out vec4 v4Color;\n"
+		"attribute vec4 position;\n"
+		"attribute vec3 v3ColorIn;\n"
+		"varying vec4 v4Color;\n"
 		"void main()\n"
 		"{\n"
 		"	v4Color.xyz = v3ColorIn; v4Color.a = 1.0;\n"
@@ -866,12 +1029,11 @@ bool CMainApplication::CreateAllShaders()
 		"}\n",
 
 		// fragment shader
-		"#version 410\n"
-		"in vec4 v4Color;\n"
-		"out vec4 outputColor;\n"
+    "precision highp float;\n"
+		"varying vec4 v4Color;\n"
 		"void main()\n"
 		"{\n"
-		"   outputColor = v4Color;\n"
+		"   gl_FragColor = v4Color;\n"
 		"}\n"
 		);
 	m_nControllerMatrixLocation = glGetUniformLocation( m_unControllerTransformProgramID, "matrix" );
@@ -885,12 +1047,11 @@ bool CMainApplication::CreateAllShaders()
 		"render model",
 
 		// vertex shader
-		"#version 410\n"
 		"uniform mat4 matrix;\n"
-		"layout(location = 0) in vec4 position;\n"
-		"layout(location = 1) in vec3 v3NormalIn;\n"
-		"layout(location = 2) in vec2 v2TexCoordsIn;\n"
-		"out vec2 v2TexCoord;\n"
+		"attribute vec4 position;\n"
+		"attribute vec3 v3NormalIn;\n"
+		"attribute vec2 v2TexCoordsIn;\n"
+		"varying vec2 v2TexCoord;\n"
 		"void main()\n"
 		"{\n"
 		"	v2TexCoord = v2TexCoordsIn;\n"
@@ -898,13 +1059,12 @@ bool CMainApplication::CreateAllShaders()
 		"}\n",
 
 		//fragment shader
-		"#version 410 core\n"
+    "precision highp float;\n"
 		"uniform sampler2D diffuse;\n"
-		"in vec2 v2TexCoord;\n"
-		"out vec4 outputColor;\n"
+		"varying vec2 v2TexCoord;\n"
 		"void main()\n"
 		"{\n"
-		"   outputColor = texture( diffuse, v2TexCoord);\n"
+		"   gl_FragColor = texture2D( diffuse, v2TexCoord);\n"
 		"}\n"
 
 		);
@@ -919,14 +1079,14 @@ bool CMainApplication::CreateAllShaders()
 		"Distortion",
 
 		// vertex shader
-		"#version 410 core\n"
-		"layout(location = 0) in vec4 position;\n"
-		"layout(location = 1) in vec2 v2UVredIn;\n"
-		"layout(location = 2) in vec2 v2UVGreenIn;\n"
-		"layout(location = 3) in vec2 v2UVblueIn;\n"
-		"noperspective  out vec2 v2UVred;\n"
-		"noperspective  out vec2 v2UVgreen;\n"
-		"noperspective  out vec2 v2UVblue;\n"
+		"attribute vec4 position;\n"
+		"attribute vec2 v2UVredIn;\n"
+		"attribute vec2 v2UVGreenIn;\n"
+		"attribute vec2 v2UVblueIn;\n"
+    // TODO: do we need an alternative to "noperspective" here?
+		"varying vec2 v2UVred;\n"
+		"varying vec2 v2UVgreen;\n"
+		"varying vec2 v2UVblue;\n"
 		"void main()\n"
 		"{\n"
 		"	v2UVred = v2UVredIn;\n"
@@ -936,29 +1096,26 @@ bool CMainApplication::CreateAllShaders()
 		"}\n",
 
 		// fragment shader
-		"#version 410 core\n"
+		"precision highp float;\n"
 		"uniform sampler2D mytexture;\n"
 
-		"noperspective  in vec2 v2UVred;\n"
-		"noperspective  in vec2 v2UVgreen;\n"
-		"noperspective  in vec2 v2UVblue;\n"
-
-		"out vec4 outputColor;\n"
+		"varying vec2 v2UVred;\n"
+		"varying vec2 v2UVgreen;\n"
+		"varying vec2 v2UVblue;\n"
 
 		"void main()\n"
 		"{\n"
 		"	float fBoundsCheck = ( (dot( vec2( lessThan( v2UVgreen.xy, vec2(0.05, 0.05)) ), vec2(1.0, 1.0))+dot( vec2( greaterThan( v2UVgreen.xy, vec2( 0.95, 0.95)) ), vec2(1.0, 1.0))) );\n"
 		"	if( fBoundsCheck > 1.0 )\n"
-		"	{ outputColor = vec4( 0, 0, 0, 1.0 ); }\n"
+		"	{ gl_FragColor = vec4( 0, 0, 0, 1.0 ); }\n"
 		"	else\n"
 		"	{\n"
-		"		float red = texture(mytexture, v2UVred).x;\n"
-		"		float green = texture(mytexture, v2UVgreen).y;\n"
-		"		float blue = texture(mytexture, v2UVblue).z;\n"
-		"		outputColor = vec4( red, green, blue, 1.0  ); }\n"
+		"		float red = texture2D(mytexture, v2UVred).x;\n"
+		"		float green = texture2D(mytexture, v2UVgreen).y;\n"
+		"		float blue = texture2D(mytexture, v2UVblue).z;\n"
+		"		gl_FragColor = vec4( red, green, blue, 1.0  ); }\n"
 		"}\n"
 		);
-
 
 	return m_unSceneProgramID != 0 
 		&& m_unControllerTransformProgramID != 0
@@ -1060,7 +1217,6 @@ void CMainApplication::SetupScene()
   // TODO: do we need these?
 	//glDisableVertexAttribArray(0);
 	//glDisableVertexAttribArray(1);
-
 }
 
 
@@ -1284,9 +1440,10 @@ bool CMainApplication::CreateFrameBuffer( int nWidth, int nHeight, FramebufferDe
 
 	glGenRenderbuffers(1, &framebufferDesc.m_nDepthBufferId);
 	glBindRenderbuffer(GL_RENDERBUFFER, framebufferDesc.m_nDepthBufferId);
-	glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT, nWidth, nHeight);
+  // TODO: Can't use GL_DEPTH_COMPONENT here; what depth to use?
+	glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, nWidth, nHeight);
 	glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER,	framebufferDesc.m_nDepthBufferId);
-
+  
 	glGenTextures(1, &framebufferDesc.m_nRenderTextureId );
   dprintf("Frame buffer texture created: %d\n", framebufferDesc.m_nRenderTextureId);
 	glBindTexture(GL_TEXTURE_2D, framebufferDesc.m_nRenderTextureId );
@@ -1294,7 +1451,6 @@ bool CMainApplication::CreateFrameBuffer( int nWidth, int nHeight, FramebufferDe
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 0);
 	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, nWidth, nHeight, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
 	glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, framebufferDesc.m_nRenderTextureId, 0);
-
 	// check FBO status
 	GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
 	if (status != GL_FRAMEBUFFER_COMPLETE)
