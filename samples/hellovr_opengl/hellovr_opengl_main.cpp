@@ -14,13 +14,15 @@
 
 #include <openvr.h>
 
+#include <d3d11_1.h>
+
 #include "shared/lodepng.h"
 #include "shared/Matrices.h"
 #include "shared/pathtools.h"
 
 #include "nvToolsExt.h"
 
-//#define USE_OPENVR
+#define USE_OPENVR
 
 int NvtxRangePushColored(const char *msg, uint32_t color) {
   nvtxEventAttributes_t eventAttrib = { 0 };
@@ -377,9 +379,7 @@ bool CMainApplication::BInit() {
 	if ( eError != vr::VRInitError_None )
 	{
 		m_pHMD = NULL;
-		char buf[1024];
-		sprintf_s( buf, sizeof( buf ), "Unable to init VR runtime: %s", vr::VR_GetVRInitErrorAsEnglishDescription( eError ) );
-		SDL_ShowSimpleMessageBox( SDL_MESSAGEBOX_ERROR, "VR_Init Failed", buf, NULL );
+		dprintf("Unable to init VR runtime: %s", vr::VR_GetVRInitErrorAsEnglishDescription( eError ) );
 		return false;
 	}
 
@@ -390,9 +390,7 @@ bool CMainApplication::BInit() {
 		m_pHMD = NULL;
 		vr::VR_Shutdown();
 
-		char buf[1024];
-		sprintf_s( buf, sizeof( buf ), "Unable to get render model interface: %s", vr::VR_GetVRInitErrorAsEnglishDescription( eError ) );
-		SDL_ShowSimpleMessageBox( SDL_MESSAGEBOX_ERROR, "VR_Init Failed", buf, NULL );
+		dprintf("Unable to get render model interface: %s", vr::VR_GetVRInitErrorAsEnglishDescription( eError ) );
 		return false;
 	}
 #endif
@@ -733,13 +731,15 @@ bool CMainApplication::HandleInput()
 void CMainApplication::RunMainLoop() {
 	MSG msg;
   while (g_running) {
+    // These need to be run before processing Windows messages; otherwise, if
+    // we call RenderFrame() after the window is closed, things can go wrong.
+    //HandleInput();
+    RenderFrame();
+
     if (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
       TranslateMessage(&msg);
       DispatchMessage(&msg);
     }
-
-    //HandleInput();
-    RenderFrame();
   }
 }
 
@@ -823,24 +823,18 @@ void CMainApplication::RenderFrame()
   glFlush();
 
 #ifdef USE_OPENVR
-  //dprintf("Submit left eye: %d\n", leftEyeDesc[cur_frame_buffer_].m_nResolveTextureId);
-#ifdef USE_DIRECTX_TEXTURE
-  vr::Texture_t leftEyeTexture = {(void*)d3d_tex_[0], vr::API_DirectX, vr::ColorSpace_Gamma};
-#else
-	vr::Texture_t leftEyeTexture = {(void*)leftEyeDesc[cur_frame_buffer_].m_nRenderTextureId, vr::API_OpenGL, vr::ColorSpace_Gamma};
-#endif
+  ID3D11Texture2D* d3d_tex;
+  angleGetFramebufferD3D11Texture2D(leftEyeDesc[cur_frame_buffer_].m_nRenderFramebufferId,
+      reinterpret_cast<void**>(&d3d_tex));
+  vr::Texture_t leftEyeTexture = {(void*)d3d_tex, vr::API_DirectX, vr::ColorSpace_Gamma};
   {
     ScopedTimer timer(submit0_buffer_, "Submit0");
     //glColor3b(100, 100, 0); // This is for gDEBugger
 		vr::VRCompositor()->Submit(vr::Eye_Left, &leftEyeTexture);
   }
-
-  //dprintf("Submit right eye: %d\n", rightEyeDesc[cur_frame_buffer_].m_nResolveTextureId);
-#ifdef USE_DIRECTX_TEXTURE
-  vr::Texture_t rightEyeTexture = {(void*)d3d_tex_[1], vr::API_DirectX, vr::ColorSpace_Gamma};
-#else
-	vr::Texture_t rightEyeTexture = {(void*)rightEyeDesc[cur_frame_buffer_].m_nRenderTextureId, vr::API_OpenGL, vr::ColorSpace_Gamma};
-#endif
+  angleGetFramebufferD3D11Texture2D(rightEyeDesc[cur_frame_buffer_].m_nRenderFramebufferId,
+      reinterpret_cast<void**>(&d3d_tex));
+  vr::Texture_t rightEyeTexture = {(void*)d3d_tex, vr::API_DirectX, vr::ColorSpace_Gamma};
   {
     ScopedTimer timer(submit1_buffer_, "Submit1");
     //glColor3b(100, 100, 1);
