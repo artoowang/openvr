@@ -812,15 +812,9 @@ void CMainApplication::RenderFrame()
 {
   NvtxRangePushColored("RenderFrame", 0xFFAA0000);
 	// for now as fast as possible
-	//DrawControllers();
+	DrawControllers();
 	RenderStereoTargets();
 	RenderDistortion();
-
-  // TODO: try sleep 3ms before submitting and see if Submit() still stalls.
-  //SleepNMilliseconds(3.0);
-
-  // This is to force rendering happen before we attempt to lock DX object.
-  glFlush();
 
 #ifdef USE_OPENVR
   ID3D11Texture2D* d3d_tex;
@@ -1445,7 +1439,7 @@ bool CMainApplication::CreateFrameBuffer( int nWidth, int nHeight, FramebufferDe
 	glBindTexture(GL_TEXTURE_2D, framebufferDesc.m_nRenderTextureId );
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 0);
-	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, nWidth, nHeight, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_SRGB8_ALPHA8, nWidth, nHeight, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
 	glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, framebufferDesc.m_nRenderTextureId, 0);
 	// check FBO status
 	GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
