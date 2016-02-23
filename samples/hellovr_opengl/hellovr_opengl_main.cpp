@@ -22,7 +22,7 @@
 
 #include "nvToolsExt.h"
 
-#define USE_OPENVR
+//#define USE_OPENVR
 
 int NvtxRangePushColored(const char *msg, uint32_t color) {
   nvtxEventAttributes_t eventAttrib = { 0 };
