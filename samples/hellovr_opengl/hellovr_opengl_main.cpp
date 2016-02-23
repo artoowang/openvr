@@ -812,25 +812,26 @@ void CMainApplication::RenderFrame()
 {
   NvtxRangePushColored("RenderFrame", 0xFFAA0000);
 	// for now as fast as possible
-	//DrawControllers();
+	DrawControllers();
 	RenderStereoTargets();
 	RenderDistortion();
-
-  // TODO: try sleep 3ms before submitting and see if Submit() still stalls.
-  //SleepNMilliseconds(3.0);
-
-  // This is to force rendering happen before we attempt to lock DX object.
-  glFlush();
 
 #ifdef USE_OPENVR
   ID3D11Texture2D* d3d_tex;
   angleGetFramebufferD3D11Texture2D(leftEyeDesc[cur_frame_buffer_].m_nRenderFramebufferId,
       reinterpret_cast<void**>(&d3d_tex));
+  D3D11_TEXTURE2D_DESC desc;
+  d3d_tex->GetDesc(&desc);
   vr::Texture_t leftEyeTexture = {(void*)d3d_tex, vr::API_DirectX, vr::ColorSpace_Gamma};
+  vr::VRTextureBounds_t bounds;
+  bounds.uMax = 1;
+  bounds.uMin = 0;
+  bounds.vMax = 0;
+  bounds.vMin = 1;
   {
     ScopedTimer timer(submit0_buffer_, "Submit0");
     //glColor3b(100, 100, 0); // This is for gDEBugger
-		vr::VRCompositor()->Submit(vr::Eye_Left, &leftEyeTexture);
+		vr::VRCompositor()->Submit(vr::Eye_Left, &leftEyeTexture, &bounds);
   }
   angleGetFramebufferD3D11Texture2D(rightEyeDesc[cur_frame_buffer_].m_nRenderFramebufferId,
       reinterpret_cast<void**>(&d3d_tex));
@@ -838,7 +839,7 @@ void CMainApplication::RenderFrame()
   {
     ScopedTimer timer(submit1_buffer_, "Submit1");
     //glColor3b(100, 100, 1);
-		vr::VRCompositor()->Submit(vr::Eye_Right, &rightEyeTexture);
+		vr::VRCompositor()->Submit(vr::Eye_Right, &rightEyeTexture, &bounds);
   }
 #endif
 
@@ -1445,7 +1446,8 @@ bool CMainApplication::CreateFrameBuffer( int nWidth, int nHeight, FramebufferDe
 	glBindTexture(GL_TEXTURE_2D, framebufferDesc.m_nRenderTextureId );
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 0);
-	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, nWidth, nHeight, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+	//glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, nWidth, nHeight, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+	glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8, nWidth, nHeight);
 	glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, framebufferDesc.m_nRenderTextureId, 0);
 	// check FBO status
 	GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
