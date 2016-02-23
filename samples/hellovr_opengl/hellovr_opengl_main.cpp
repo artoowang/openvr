@@ -90,6 +90,7 @@ public:
 
 private: 
 	bool m_bDebugOpenGL;
+  bool m_bDebugOutputSync;
 	bool m_bVerbose;
 	bool m_bPerf;
 	bool m_bVblank;
@@ -233,6 +234,7 @@ CMainApplication::CMainApplication( int argc, char *argv[] )
 	, m_pHMD( NULL )
 	, m_pRenderModels( NULL )
 	, m_bDebugOpenGL( false )
+  , m_bDebugOutputSync( false )
 	, m_bVerbose( false )
 	, m_bPerf( false )
 	, m_bVblank( false )
@@ -259,6 +261,10 @@ CMainApplication::CMainApplication( int argc, char *argv[] )
 		{
 			m_bDebugOpenGL = true;
 		}
+    else if( !stricmp( argv[i], "-gldebugoutputsync" ) )
+    {
+      m_bDebugOutputSync = true;
+    }
 		else if( !stricmp( argv[i], "-verbose" ) )
 		{
 			m_bVerbose = true;
@@ -459,6 +465,11 @@ bool CMainApplication::BInitGL()
 		glDebugMessageControl( GL_DONT_CARE, GL_DONT_CARE, GL_DONT_CARE, 0, nullptr, GL_TRUE );
 		glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
 	}
+
+  if ( m_bDebugOutputSync )
+  {
+    glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
+  }
 
 	if( !CreateAllShaders() )
 		return false;
