@@ -21,6 +21,7 @@
 
 #define USE_OPENVR
 //#define USE_DIRECTX_TEXTURE
+//#define USE_RENDERBUFFER
 
 // Definitions from NV_DX_interop.
 #define WGL_ACCESS_WRITE_DISCARD_NV 0x0002
@@ -69,7 +70,7 @@ private:
 
 static bool g_bPrintf = true;
 
-static const int kNumBuffers = 1;
+static const int kNumBuffers = 2;
 
 //-----------------------------------------------------------------------------
 // Purpose:
@@ -419,7 +420,7 @@ bool CMainApplication::BInit()
 	Uint32 unWindowFlags = SDL_WINDOW_OPENGL | SDL_WINDOW_SHOWN;
 
 	SDL_GL_SetAttribute( SDL_GL_CONTEXT_MAJOR_VERSION, 4 );
-	SDL_GL_SetAttribute( SDL_GL_CONTEXT_MINOR_VERSION, 1 );
+	SDL_GL_SetAttribute( SDL_GL_CONTEXT_MINOR_VERSION, 5 );
 	//SDL_GL_SetAttribute( SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_COMPATIBILITY );
 	SDL_GL_SetAttribute( SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE );
 
@@ -515,7 +516,7 @@ bool CMainApplication::BInit()
 //-----------------------------------------------------------------------------
 void APIENTRY DebugCallback(GLenum source, GLenum type, GLuint id, GLenum severity, GLsizei length, const char* message, const void* userParam)
 {
-	dprintf( "GL Error: %s\n", message );
+  //dprintf( "GL Debug: %s\n", message );
 }
 
 
@@ -524,11 +525,20 @@ void APIENTRY DebugCallback(GLenum source, GLenum type, GLuint id, GLenum severi
 //-----------------------------------------------------------------------------
 bool CMainApplication::BInitGL()
 {
-	if( m_bDebugOpenGL )
+	//if( m_bDebugOpenGL )
 	{
-		glDebugMessageCallback(DebugCallback, nullptr);
-		glDebugMessageControl( GL_DONT_CARE, GL_DONT_CARE, GL_DONT_CARE, 0, nullptr, GL_TRUE );
-		glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
+		//glDebugMessageCallback(nullptr, nullptr);
+		//glDebugMessageControl( GL_DONT_CARE, GL_DONT_CARE, GL_DONT_CARE, 0, nullptr, GL_TRUE );
+    /*glDebugMessageControl( GL_DONT_CARE, GL_DEBUG_TYPE_ERROR, GL_DONT_CARE, 0, nullptr, GL_TRUE );
+    glDebugMessageControl( GL_DONT_CARE, GL_DEBUG_TYPE_DEPRECATED_BEHAVIOR, GL_DONT_CARE, 0, nullptr, GL_TRUE );
+    glDebugMessageControl( GL_DONT_CARE, GL_DEBUG_TYPE_UNDEFINED_BEHAVIOR, GL_DONT_CARE, 0, nullptr, GL_TRUE );
+    glDebugMessageControl( GL_DONT_CARE, GL_DEBUG_TYPE_PORTABILITY, GL_DONT_CARE, 0, nullptr, GL_TRUE );
+    glDebugMessageControl( GL_DONT_CARE, GL_DEBUG_TYPE_PERFORMANCE, GL_DONT_CARE, 0, nullptr, GL_TRUE );
+    glDebugMessageControl( GL_DONT_CARE, GL_DEBUG_TYPE_MARKER, GL_DONT_CARE, 0, nullptr, GL_TRUE );
+    glDebugMessageControl( GL_DONT_CARE, GL_DEBUG_TYPE_PUSH_GROUP, GL_DONT_CARE, 0, nullptr, GL_TRUE );
+    glDebugMessageControl( GL_DONT_CARE, GL_DEBUG_TYPE_POP_GROUP, GL_DONT_CARE, 0, nullptr, GL_TRUE );
+    glDebugMessageControl( GL_DONT_CARE, GL_DEBUG_TYPE_OTHER, GL_DONT_CARE, 0, nullptr, GL_TRUE );*/
+		//glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
 	}
 
 	if( !CreateAllShaders() )
@@ -608,11 +618,19 @@ void CMainApplication::Shutdown()
     for (int i = 0; i < kNumBuffers; ++i)
     {
 		  glDeleteRenderbuffers( 1, &leftEyeDesc[i].m_nDepthBufferId );
+#ifdef USE_RENDERBUFFER
+      glDeleteRenderbuffers( 1, &leftEyeDesc[i].m_nRenderTextureId );
+#else
 		  glDeleteTextures( 1, &leftEyeDesc[i].m_nRenderTextureId );
+#endif
 		  glDeleteFramebuffers( 1, &leftEyeDesc[i].m_nRenderFramebufferId );
 
 		  glDeleteRenderbuffers( 1, &rightEyeDesc[i].m_nDepthBufferId );
-		  glDeleteTextures( 1, &rightEyeDesc[i].m_nRenderTextureId );
+#ifdef USE_RENDERBUFFER
+		  glDeleteRenderbuffers( 1, &rightEyeDesc[i].m_nRenderTextureId );
+#else
+      glDeleteTextures( 1, &rightEyeDesc[i].m_nRenderTextureId );
+#endif
 		  glDeleteFramebuffers( 1, &rightEyeDesc[i].m_nRenderFramebufferId );
     }
 
@@ -793,7 +811,7 @@ void CMainApplication::RenderFrame()
   NvtxRangePushColored("RenderFrame", 0xFFAA0000);
 	// for now as fast as possible
 	//DrawControllers();
-	RenderStereoTargets();
+	//RenderStereoTargets();
 	//RenderDistortion();
 
   // TODO: try sleep 3ms before submitting and see if Submit() still stalls.
@@ -808,9 +826,9 @@ void CMainApplication::RenderFrame()
     glClientWaitSync(sync, GL_SYNC_FLUSH_COMMANDS_BIT, GL_TIMEOUT_IGNORED);
     glDeleteSync(sync);
   }*/
-  glFlush();
+  //glFlush();
 
-  {
+  /*{
     ScopedTimer timer(present_buffer_, "Test");
     GLuint texs[2] = {
       leftEyeDesc[cur_frame_buffer_].m_nRenderTextureId,
@@ -818,9 +836,24 @@ void CMainApplication::RenderFrame()
     };
     //CopyToD3DTexture(texs);
     //glFinish();
-  }
+  }*/
+
+  glClearColor( 0.15f, 0.15f, 0.18f, 1.0f ); // nice background color, but not black
+
+	// Left Eye
+	glBindFramebuffer( GL_FRAMEBUFFER, leftEyeDesc[cur_frame_buffer_].m_nRenderFramebufferId );
+ 	glViewport(0, 0, m_nRenderWidth, m_nRenderHeight );
+ 	RenderScene( vr::Eye_Left );
+ 	glBindFramebuffer( GL_FRAMEBUFFER, 0 );
+
+#ifdef USE_RENDERBUFFER
+  const vr::EVRSubmitFlags submit_flag = vr::Submit_GlRenderBuffer;
+#else
+  const vr::EVRSubmitFlags submit_flag = vr::Submit_Default;
+#endif
 
 #ifdef USE_OPENVR
+  glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
   //dprintf("Submit left eye: %d\n", leftEyeDesc[cur_frame_buffer_].m_nResolveTextureId);
 #ifdef USE_DIRECTX_TEXTURE
   vr::Texture_t leftEyeTexture = {(void*)d3d_tex_[0], vr::API_DirectX, vr::ColorSpace_Gamma};
@@ -830,9 +863,19 @@ void CMainApplication::RenderFrame()
   {
     ScopedTimer timer(submit0_buffer_, "Submit0");
     //glColor3b(100, 100, 0); // This is for gDEBugger
-		vr::VRCompositor()->Submit(vr::Eye_Left, &leftEyeTexture);
+		vr::VRCompositor()->Submit(vr::Eye_Left, &leftEyeTexture, nullptr, submit_flag);
   }
+  glDisable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
+#endif
 
+  // Right Eye
+	glBindFramebuffer( GL_FRAMEBUFFER, rightEyeDesc[cur_frame_buffer_].m_nRenderFramebufferId );
+ 	glViewport(0, 0, m_nRenderWidth, m_nRenderHeight );
+ 	RenderScene( vr::Eye_Right );
+ 	glBindFramebuffer( GL_FRAMEBUFFER, 0 );
+
+#ifdef USE_OPENVR
+  glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
   //dprintf("Submit right eye: %d\n", rightEyeDesc[cur_frame_buffer_].m_nResolveTextureId);
 #ifdef USE_DIRECTX_TEXTURE
   vr::Texture_t rightEyeTexture = {(void*)d3d_tex_[1], vr::API_DirectX, vr::ColorSpace_Gamma};
@@ -842,9 +885,11 @@ void CMainApplication::RenderFrame()
   {
     ScopedTimer timer(submit1_buffer_, "Submit1");
     //glColor3b(100, 100, 1);
-		vr::VRCompositor()->Submit(vr::Eye_Right, &rightEyeTexture);
+		vr::VRCompositor()->Submit(vr::Eye_Right, &rightEyeTexture, nullptr, submit_flag);
   }
+  glDisable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
 #endif
+  
 
 	if ( m_bVblank && m_bGlFinishHack )
 	{
@@ -886,7 +931,7 @@ void CMainApplication::RenderFrame()
 		dprintf( "PoseCount:%d(%s) Controllers:%d\n", m_iValidPoseCount, m_strPoseClasses.c_str(), m_iTrackedControllerCount );
 	}
 
-  //cur_frame_buffer_ = (cur_frame_buffer_ + 1) % kNumBuffers;
+  cur_frame_buffer_ = (cur_frame_buffer_ + 1) % kNumBuffers;
 
 	UpdateHMDMatrixPose();
 
@@ -1428,14 +1473,43 @@ bool CMainApplication::CreateFrameBuffer( int nWidth, int nHeight, FramebufferDe
 	glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT, nWidth, nHeight);
 	glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER,	framebufferDesc.m_nDepthBufferId);
 
-	glGenTextures(1, &framebufferDesc.m_nRenderTextureId );
+#ifdef USE_RENDERBUFFER
+  glGenRenderbuffers(1, &framebufferDesc.m_nRenderTextureId);
+  dprintf("Frame buffer color renderbuffer created: %d\n", framebufferDesc.m_nRenderTextureId);
+  glBindRenderbuffer(GL_RENDERBUFFER, framebufferDesc.m_nRenderTextureId);
+  glRenderbufferStorage(GL_RENDERBUFFER, GL_RGBA8, nWidth, nHeight);
+  glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, framebufferDesc.m_nRenderTextureId);
+#else
+  glCreateTextures(GL_TEXTURE_2D, 1, &framebufferDesc.m_nRenderTextureId);
   dprintf("Frame buffer texture created: %d\n", framebufferDesc.m_nRenderTextureId);
-	glBindTexture(GL_TEXTURE_2D, framebufferDesc.m_nRenderTextureId );
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 0);
+	glBindTexture(GL_TEXTURE_2D, framebufferDesc.m_nRenderTextureId);
+	//glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+	//glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 0);
 	//glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, nWidth, nHeight, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
-  glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8, nWidth, nHeight);
+  //glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8, nWidth, nHeight);
+  glTextureParameteri(framebufferDesc.m_nRenderTextureId, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+  glTextureParameteri(framebufferDesc.m_nRenderTextureId, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+  glTextureParameteri(framebufferDesc.m_nRenderTextureId, GL_TEXTURE_BASE_LEVEL, 0);
+  glTextureParameteri(framebufferDesc.m_nRenderTextureId, GL_TEXTURE_MAX_LEVEL, 0);
+  glTextureStorage2D(framebufferDesc.m_nRenderTextureId, 1, GL_RGBA8, nWidth, nHeight);
+  glTextureParameteri(framebufferDesc.m_nRenderTextureId, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glTextureParameteri(framebufferDesc.m_nRenderTextureId, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  glTextureParameteri(framebufferDesc.m_nRenderTextureId, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
+  glTextureParameteri(framebufferDesc.m_nRenderTextureId, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  glTextureParameteri(framebufferDesc.m_nRenderTextureId, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+  glTextureParameterf(framebufferDesc.m_nRenderTextureId, GL_TEXTURE_LOD_BIAS, 0);
+  glTextureParameteri(framebufferDesc.m_nRenderTextureId, GL_TEXTURE_SRGB_DECODE_EXT, GL_DECODE_EXT);
+  glLabelObjectEXT(GL_TEXTURE, framebufferDesc.m_nRenderTextureId, 0, "TempBuffer 6 1599x1689");
+  glTextureParameteri(framebufferDesc.m_nRenderTextureId, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glTextureParameteri(framebufferDesc.m_nRenderTextureId, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  glTextureParameteri(framebufferDesc.m_nRenderTextureId, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
+  glTextureParameteri(framebufferDesc.m_nRenderTextureId, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  glTextureParameteri(framebufferDesc.m_nRenderTextureId, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+  glTextureParameteri(framebufferDesc.m_nRenderTextureId, GL_TEXTURE_MAX_ANISOTROPY_EXT, 9);
+  glTextureParameterf(framebufferDesc.m_nRenderTextureId, GL_TEXTURE_LOD_BIAS, 0);
+  glTextureParameteri(framebufferDesc.m_nRenderTextureId, GL_TEXTURE_SRGB_DECODE_EXT, GL_DECODE_EXT);
 	glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, framebufferDesc.m_nRenderTextureId, 0);
+#endif
 
 	// check FBO status
 	GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
@@ -1660,7 +1734,7 @@ void CMainApplication::RenderScene( vr::Hmd_Eye nEye )
 		glBindVertexArray( 0 );
 	}
 
-  if (m_pHMD) {
+  /*if (m_pHMD) {
 	  bool bIsInputCapturedByAnotherProcess = m_pHMD->IsInputFocusCapturedByAnotherProcess();
 
 	  if( !bIsInputCapturedByAnotherProcess )
@@ -1696,7 +1770,7 @@ void CMainApplication::RenderScene( vr::Hmd_Eye nEye )
 	  }
 
 	  glUseProgram( 0 );
-  }
+  }*/
 }
 
 
@@ -1705,6 +1779,9 @@ void CMainApplication::RenderScene( vr::Hmd_Eye nEye )
 //-----------------------------------------------------------------------------
 void CMainApplication::RenderDistortion()
 {
+#ifdef USE_RENDERBUFFER
+  // TODO: Not implemented
+#else
 	glDisable(GL_DEPTH_TEST);
 	glViewport( 0, 0, m_nWindowWidth, m_nWindowHeight );
 
@@ -1729,6 +1806,7 @@ void CMainApplication::RenderDistortion()
 
 	glBindVertexArray( 0 );
 	glUseProgram( 0 );
+#endif
 }
 
 
