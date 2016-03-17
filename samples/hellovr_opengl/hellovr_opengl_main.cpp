@@ -15,6 +15,8 @@
 #include "shared/Matrices.h"
 #include "shared/pathtools.h"
 
+#define USE_RENDERBUFFER
+
 class CGLRenderModel
 {
 public:
@@ -548,13 +550,21 @@ void CMainApplication::Shutdown()
     glDeleteRenderbuffers( 1, &leftEyeDesc.m_nDepthBufferId );
     glDeleteTextures( 1, &leftEyeDesc.m_nRenderTextureId );
     glDeleteFramebuffers( 1, &leftEyeDesc.m_nRenderFramebufferId );
+#ifdef USE_RENDERBUFFER
+    glDeleteRenderbuffers( 1, &leftEyeDesc.m_nResolveTextureId );
+#else
     glDeleteTextures( 1, &leftEyeDesc.m_nResolveTextureId );
+#endif
     glDeleteFramebuffers( 1, &leftEyeDesc.m_nResolveFramebufferId );
 
     glDeleteRenderbuffers( 1, &rightEyeDesc.m_nDepthBufferId );
     glDeleteTextures( 1, &rightEyeDesc.m_nRenderTextureId );
     glDeleteFramebuffers( 1, &rightEyeDesc.m_nRenderFramebufferId );
+#ifdef USE_RENDERBUFFER
+    glDeleteRenderbuffers( 1, &rightEyeDesc.m_nResolveTextureId );
+#else
     glDeleteTextures( 1, &rightEyeDesc.m_nResolveTextureId );
+#endif
     glDeleteFramebuffers( 1, &rightEyeDesc.m_nResolveFramebufferId );
 
     if( m_unLensVAO != 0 )
@@ -724,15 +734,21 @@ void CMainApplication::RenderFrame()
     RenderStereoTargets();
     RenderDistortion();
 
+#ifdef USE_RENDERBUFFER
+    const vr::EVRSubmitFlags submit_flag = vr::Submit_GlRenderBuffer;
+#else
+    const vr::EVRSubmitFlags submit_flag = vr::Submit_Default;
+#endif
+
     vr::Texture_t leftEyeTexture = {(void*)leftEyeDesc.m_nResolveTextureId, vr::API_OpenGL, vr::ColorSpace_Gamma };
     {
       ScopedTimer timer(submit0_buffer_, "Submit0");
-      vr::VRCompositor()->Submit(vr::Eye_Left, &leftEyeTexture );
+      vr::VRCompositor()->Submit(vr::Eye_Left, &leftEyeTexture, nullptr, submit_flag );
     }
     vr::Texture_t rightEyeTexture = {(void*)rightEyeDesc.m_nResolveTextureId, vr::API_OpenGL, vr::ColorSpace_Gamma };
     {
       ScopedTimer timer(submit1_buffer_, "Submit1");
-      vr::VRCompositor()->Submit(vr::Eye_Right, &rightEyeTexture );
+      vr::VRCompositor()->Submit(vr::Eye_Right, &rightEyeTexture, nullptr, submit_flag );
     }
   }
 
@@ -1300,12 +1316,19 @@ bool CMainApplication::CreateFrameBuffer( int nWidth, int nHeight, FramebufferDe
   glGenFramebuffers(1, &framebufferDesc.m_nResolveFramebufferId );
   glBindFramebuffer(GL_FRAMEBUFFER, framebufferDesc.m_nResolveFramebufferId);
 
+#ifdef USE_RENDERBUFFER
+  glGenRenderbuffers(1, &framebufferDesc.m_nResolveTextureId);
+  glBindRenderbuffer(GL_RENDERBUFFER, framebufferDesc.m_nResolveTextureId);
+  glRenderbufferStorage(GL_RENDERBUFFER, GL_RGBA8, nWidth, nHeight);
+  glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, framebufferDesc.m_nResolveTextureId);
+#else
   glGenTextures(1, &framebufferDesc.m_nResolveTextureId );
   glBindTexture(GL_TEXTURE_2D, framebufferDesc.m_nResolveTextureId );
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 0);
   glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, nWidth, nHeight, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
   glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, framebufferDesc.m_nResolveTextureId, 0);
+#endif
 
   // check FBO status
   GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
@@ -1580,6 +1603,9 @@ void CMainApplication::RenderScene( vr::Hmd_Eye nEye )
 //-----------------------------------------------------------------------------
 void CMainApplication::RenderDistortion()
 {
+#ifdef USE_RENDERBUFFER
+  // Not implemented
+#else
   glDisable(GL_DEPTH_TEST);
   glViewport( 0, 0, m_nWindowWidth, m_nWindowHeight );
 
@@ -1604,6 +1630,7 @@ void CMainApplication::RenderDistortion()
 
   glBindVertexArray( 0 );
   glUseProgram( 0 );
+#endif
 }
 
 
