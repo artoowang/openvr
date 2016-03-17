@@ -185,8 +185,10 @@ private: // OpenGL bookkeeping
     GLuint m_nDepthBufferId;
     GLuint m_nRenderTextureId;
     GLuint m_nRenderFramebufferId;
+#ifndef USE_RENDERBUFFER
     GLuint m_nResolveTextureId;
     GLuint m_nResolveFramebufferId;
+#endif
   };
   FramebufferDesc leftEyeDesc;
   FramebufferDesc rightEyeDesc;
@@ -548,24 +550,24 @@ void CMainApplication::Shutdown()
     }
 
     glDeleteRenderbuffers( 1, &leftEyeDesc.m_nDepthBufferId );
-    glDeleteTextures( 1, &leftEyeDesc.m_nRenderTextureId );
-    glDeleteFramebuffers( 1, &leftEyeDesc.m_nRenderFramebufferId );
 #ifdef USE_RENDERBUFFER
-    glDeleteRenderbuffers( 1, &leftEyeDesc.m_nResolveTextureId );
+    glDeleteRenderbuffers( 1, &leftEyeDesc.m_nRenderTextureId );
 #else
+    glDeleteTextures( 1, &leftEyeDesc.m_nRenderTextureId );
     glDeleteTextures( 1, &leftEyeDesc.m_nResolveTextureId );
-#endif
     glDeleteFramebuffers( 1, &leftEyeDesc.m_nResolveFramebufferId );
+#endif
+    glDeleteFramebuffers( 1, &leftEyeDesc.m_nRenderFramebufferId );
 
     glDeleteRenderbuffers( 1, &rightEyeDesc.m_nDepthBufferId );
-    glDeleteTextures( 1, &rightEyeDesc.m_nRenderTextureId );
-    glDeleteFramebuffers( 1, &rightEyeDesc.m_nRenderFramebufferId );
 #ifdef USE_RENDERBUFFER
-    glDeleteRenderbuffers( 1, &rightEyeDesc.m_nResolveTextureId );
+    glDeleteRenderbuffers( 1, &rightEyeDesc.m_nRenderTextureId );
 #else
+    glDeleteTextures( 1, &rightEyeDesc.m_nRenderTextureId );
     glDeleteTextures( 1, &rightEyeDesc.m_nResolveTextureId );
-#endif
     glDeleteFramebuffers( 1, &rightEyeDesc.m_nResolveFramebufferId );
+#endif
+    glDeleteFramebuffers( 1, &rightEyeDesc.m_nRenderFramebufferId );
 
     if( m_unLensVAO != 0 )
     {
@@ -736,16 +738,20 @@ void CMainApplication::RenderFrame()
 
 #ifdef USE_RENDERBUFFER
     const vr::EVRSubmitFlags submit_flag = vr::Submit_GlRenderBuffer;
+    const GLuint left_texture = leftEyeDesc.m_nRenderTextureId;
+    const GLuint right_texture = rightEyeDesc.m_nRenderTextureId;
 #else
     const vr::EVRSubmitFlags submit_flag = vr::Submit_Default;
+    const GLuint left_texture = leftEyeDesc.m_nResolveTextureId;
+    const GLuint right_texture = rightEyeDesc.m_nResolveTextureId;
 #endif
 
-    vr::Texture_t leftEyeTexture = {(void*)leftEyeDesc.m_nResolveTextureId, vr::API_OpenGL, vr::ColorSpace_Gamma };
+    vr::Texture_t leftEyeTexture = {(void*)left_texture, vr::API_OpenGL, vr::ColorSpace_Gamma };
     {
       ScopedTimer timer(submit0_buffer_, "Submit0");
       vr::VRCompositor()->Submit(vr::Eye_Left, &leftEyeTexture, nullptr, submit_flag );
     }
-    vr::Texture_t rightEyeTexture = {(void*)rightEyeDesc.m_nResolveTextureId, vr::API_OpenGL, vr::ColorSpace_Gamma };
+    vr::Texture_t rightEyeTexture = {(void*)right_texture, vr::API_OpenGL, vr::ColorSpace_Gamma };
     {
       ScopedTimer timer(submit1_buffer_, "Submit1");
       vr::VRCompositor()->Submit(vr::Eye_Right, &rightEyeTexture, nullptr, submit_flag );
@@ -1308,6 +1314,12 @@ bool CMainApplication::CreateFrameBuffer( int nWidth, int nHeight, FramebufferDe
   glRenderbufferStorageMultisample(GL_RENDERBUFFER, 4, GL_DEPTH_COMPONENT, nWidth, nHeight );
   glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER,	framebufferDesc.m_nDepthBufferId );
 
+#ifdef USE_RENDERBUFFER
+  glGenRenderbuffers(1, &framebufferDesc.m_nRenderTextureId);
+  glBindRenderbuffer(GL_RENDERBUFFER, framebufferDesc.m_nRenderTextureId);
+  glRenderbufferStorageMultisample(GL_RENDERBUFFER, 4, GL_RGBA8, nWidth, nHeight);
+  glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, framebufferDesc.m_nRenderTextureId);
+#else
   glGenTextures(1, &framebufferDesc.m_nRenderTextureId );
   glBindTexture(GL_TEXTURE_2D_MULTISAMPLE, framebufferDesc.m_nRenderTextureId );
   glTexImage2DMultisample(GL_TEXTURE_2D_MULTISAMPLE, 4, GL_RGBA8, nWidth, nHeight, true);
@@ -1316,12 +1328,6 @@ bool CMainApplication::CreateFrameBuffer( int nWidth, int nHeight, FramebufferDe
   glGenFramebuffers(1, &framebufferDesc.m_nResolveFramebufferId );
   glBindFramebuffer(GL_FRAMEBUFFER, framebufferDesc.m_nResolveFramebufferId);
 
-#ifdef USE_RENDERBUFFER
-  glGenRenderbuffers(1, &framebufferDesc.m_nResolveTextureId);
-  glBindRenderbuffer(GL_RENDERBUFFER, framebufferDesc.m_nResolveTextureId);
-  glRenderbufferStorage(GL_RENDERBUFFER, GL_RGBA8, nWidth, nHeight);
-  glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, framebufferDesc.m_nResolveTextureId);
-#else
   glGenTextures(1, &framebufferDesc.m_nResolveTextureId );
   glBindTexture(GL_TEXTURE_2D, framebufferDesc.m_nResolveTextureId );
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
@@ -1507,9 +1513,10 @@ void CMainApplication::RenderStereoTargets()
   glViewport(0, 0, m_nRenderWidth, m_nRenderHeight );
   RenderScene( vr::Eye_Left );
   glBindFramebuffer( GL_FRAMEBUFFER, 0 );
-  
+
+#ifndef USE_RENDERBUFFER
   glDisable( GL_MULTISAMPLE );
-    
+
   glBindFramebuffer(GL_READ_FRAMEBUFFER, leftEyeDesc.m_nRenderFramebufferId);
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, leftEyeDesc.m_nResolveFramebufferId );
 
@@ -1521,6 +1528,7 @@ void CMainApplication::RenderStereoTargets()
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0 );	
 
   glEnable( GL_MULTISAMPLE );
+#endif
 
   // Right Eye
   glBindFramebuffer( GL_FRAMEBUFFER, rightEyeDesc.m_nRenderFramebufferId );
@@ -1530,6 +1538,7 @@ void CMainApplication::RenderStereoTargets()
   
   glDisable( GL_MULTISAMPLE );
 
+#ifndef USE_RENDERBUFFER
   glBindFramebuffer(GL_READ_FRAMEBUFFER, rightEyeDesc.m_nRenderFramebufferId );
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, rightEyeDesc.m_nResolveFramebufferId );
   
@@ -1539,6 +1548,7 @@ void CMainApplication::RenderStereoTargets()
 
   glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0 );
+#endif
 }
 
 
