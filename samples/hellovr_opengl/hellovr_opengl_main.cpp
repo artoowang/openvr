@@ -70,7 +70,7 @@ private:
 
 static bool g_bPrintf = true;
 
-static const int kNumBuffers = 2;
+static const int kNumBuffers = 1;
 
 //-----------------------------------------------------------------------------
 // Purpose:
@@ -516,7 +516,7 @@ bool CMainApplication::BInit()
 //-----------------------------------------------------------------------------
 void APIENTRY DebugCallback(GLenum source, GLenum type, GLuint id, GLenum severity, GLsizei length, const char* message, const void* userParam)
 {
-  //dprintf( "GL Debug: %s\n", message );
+	dprintf( "GL Debug: %s\n", message );
 }
 
 
@@ -525,20 +525,11 @@ void APIENTRY DebugCallback(GLenum source, GLenum type, GLuint id, GLenum severi
 //-----------------------------------------------------------------------------
 bool CMainApplication::BInitGL()
 {
-	//if( m_bDebugOpenGL )
+	if( m_bDebugOpenGL )
 	{
-		//glDebugMessageCallback(nullptr, nullptr);
-		//glDebugMessageControl( GL_DONT_CARE, GL_DONT_CARE, GL_DONT_CARE, 0, nullptr, GL_TRUE );
-    /*glDebugMessageControl( GL_DONT_CARE, GL_DEBUG_TYPE_ERROR, GL_DONT_CARE, 0, nullptr, GL_TRUE );
-    glDebugMessageControl( GL_DONT_CARE, GL_DEBUG_TYPE_DEPRECATED_BEHAVIOR, GL_DONT_CARE, 0, nullptr, GL_TRUE );
-    glDebugMessageControl( GL_DONT_CARE, GL_DEBUG_TYPE_UNDEFINED_BEHAVIOR, GL_DONT_CARE, 0, nullptr, GL_TRUE );
-    glDebugMessageControl( GL_DONT_CARE, GL_DEBUG_TYPE_PORTABILITY, GL_DONT_CARE, 0, nullptr, GL_TRUE );
-    glDebugMessageControl( GL_DONT_CARE, GL_DEBUG_TYPE_PERFORMANCE, GL_DONT_CARE, 0, nullptr, GL_TRUE );
-    glDebugMessageControl( GL_DONT_CARE, GL_DEBUG_TYPE_MARKER, GL_DONT_CARE, 0, nullptr, GL_TRUE );
-    glDebugMessageControl( GL_DONT_CARE, GL_DEBUG_TYPE_PUSH_GROUP, GL_DONT_CARE, 0, nullptr, GL_TRUE );
-    glDebugMessageControl( GL_DONT_CARE, GL_DEBUG_TYPE_POP_GROUP, GL_DONT_CARE, 0, nullptr, GL_TRUE );
-    glDebugMessageControl( GL_DONT_CARE, GL_DEBUG_TYPE_OTHER, GL_DONT_CARE, 0, nullptr, GL_TRUE );*/
-		//glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
+		glDebugMessageCallback(DebugCallback, nullptr);
+		glDebugMessageControl( GL_DONT_CARE, GL_DONT_CARE, GL_DONT_CARE, 0, nullptr, GL_TRUE );
+		glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
 	}
 
 	if( !CreateAllShaders() )
@@ -619,7 +610,7 @@ void CMainApplication::Shutdown()
     {
 		  glDeleteRenderbuffers( 1, &leftEyeDesc[i].m_nDepthBufferId );
 #ifdef USE_RENDERBUFFER
-      glDeleteRenderbuffers( 1, &leftEyeDesc[i].m_nRenderTextureId );
+		  glDeleteRenderbuffers( 1, &leftEyeDesc[i].m_nRenderTextureId );
 #else
 		  glDeleteTextures( 1, &leftEyeDesc[i].m_nRenderTextureId );
 #endif
@@ -629,7 +620,7 @@ void CMainApplication::Shutdown()
 #ifdef USE_RENDERBUFFER
 		  glDeleteRenderbuffers( 1, &rightEyeDesc[i].m_nRenderTextureId );
 #else
-      glDeleteTextures( 1, &rightEyeDesc[i].m_nRenderTextureId );
+		  glDeleteTextures( 1, &rightEyeDesc[i].m_nRenderTextureId );
 #endif
 		  glDeleteFramebuffers( 1, &rightEyeDesc[i].m_nRenderFramebufferId );
     }
@@ -811,7 +802,7 @@ void CMainApplication::RenderFrame()
   NvtxRangePushColored("RenderFrame", 0xFFAA0000);
 	// for now as fast as possible
 	//DrawControllers();
-	//RenderStereoTargets();
+	RenderStereoTargets();
 	//RenderDistortion();
 
   // TODO: try sleep 3ms before submitting and see if Submit() still stalls.
@@ -838,14 +829,6 @@ void CMainApplication::RenderFrame()
     //glFinish();
   }*/
 
-  glClearColor( 0.15f, 0.15f, 0.18f, 1.0f ); // nice background color, but not black
-
-	// Left Eye
-	glBindFramebuffer( GL_FRAMEBUFFER, leftEyeDesc[cur_frame_buffer_].m_nRenderFramebufferId );
- 	glViewport(0, 0, m_nRenderWidth, m_nRenderHeight );
- 	RenderScene( vr::Eye_Left );
- 	glBindFramebuffer( GL_FRAMEBUFFER, 0 );
-
 #ifdef USE_RENDERBUFFER
   const vr::EVRSubmitFlags submit_flag = vr::Submit_GlRenderBuffer;
 #else
@@ -853,7 +836,6 @@ void CMainApplication::RenderFrame()
 #endif
 
 #ifdef USE_OPENVR
-  glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
   //dprintf("Submit left eye: %d\n", leftEyeDesc[cur_frame_buffer_].m_nResolveTextureId);
 #ifdef USE_DIRECTX_TEXTURE
   vr::Texture_t leftEyeTexture = {(void*)d3d_tex_[0], vr::API_DirectX, vr::ColorSpace_Gamma};
@@ -865,17 +847,7 @@ void CMainApplication::RenderFrame()
     //glColor3b(100, 100, 0); // This is for gDEBugger
 		vr::VRCompositor()->Submit(vr::Eye_Left, &leftEyeTexture, nullptr, submit_flag);
   }
-  glDisable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
-#endif
 
-  // Right Eye
-	glBindFramebuffer( GL_FRAMEBUFFER, rightEyeDesc[cur_frame_buffer_].m_nRenderFramebufferId );
- 	glViewport(0, 0, m_nRenderWidth, m_nRenderHeight );
- 	RenderScene( vr::Eye_Right );
- 	glBindFramebuffer( GL_FRAMEBUFFER, 0 );
-
-#ifdef USE_OPENVR
-  glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
   //dprintf("Submit right eye: %d\n", rightEyeDesc[cur_frame_buffer_].m_nResolveTextureId);
 #ifdef USE_DIRECTX_TEXTURE
   vr::Texture_t rightEyeTexture = {(void*)d3d_tex_[1], vr::API_DirectX, vr::ColorSpace_Gamma};
@@ -887,9 +859,7 @@ void CMainApplication::RenderFrame()
     //glColor3b(100, 100, 1);
 		vr::VRCompositor()->Submit(vr::Eye_Right, &rightEyeTexture, nullptr, submit_flag);
   }
-  glDisable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
 #endif
-  
 
 	if ( m_bVblank && m_bGlFinishHack )
 	{
@@ -1480,34 +1450,13 @@ bool CMainApplication::CreateFrameBuffer( int nWidth, int nHeight, FramebufferDe
   glRenderbufferStorage(GL_RENDERBUFFER, GL_RGBA8, nWidth, nHeight);
   glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, framebufferDesc.m_nRenderTextureId);
 #else
-  glCreateTextures(GL_TEXTURE_2D, 1, &framebufferDesc.m_nRenderTextureId);
+	glGenTextures(1, &framebufferDesc.m_nRenderTextureId );
   dprintf("Frame buffer texture created: %d\n", framebufferDesc.m_nRenderTextureId);
-	glBindTexture(GL_TEXTURE_2D, framebufferDesc.m_nRenderTextureId);
-	//glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-	//glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 0);
+	glBindTexture(GL_TEXTURE_2D, framebufferDesc.m_nRenderTextureId );
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 0);
 	//glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, nWidth, nHeight, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
-  //glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8, nWidth, nHeight);
-  glTextureParameteri(framebufferDesc.m_nRenderTextureId, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-  glTextureParameteri(framebufferDesc.m_nRenderTextureId, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-  glTextureParameteri(framebufferDesc.m_nRenderTextureId, GL_TEXTURE_BASE_LEVEL, 0);
-  glTextureParameteri(framebufferDesc.m_nRenderTextureId, GL_TEXTURE_MAX_LEVEL, 0);
-  glTextureStorage2D(framebufferDesc.m_nRenderTextureId, 1, GL_RGBA8, nWidth, nHeight);
-  glTextureParameteri(framebufferDesc.m_nRenderTextureId, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-  glTextureParameteri(framebufferDesc.m_nRenderTextureId, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-  glTextureParameteri(framebufferDesc.m_nRenderTextureId, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
-  glTextureParameteri(framebufferDesc.m_nRenderTextureId, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-  glTextureParameteri(framebufferDesc.m_nRenderTextureId, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-  glTextureParameterf(framebufferDesc.m_nRenderTextureId, GL_TEXTURE_LOD_BIAS, 0);
-  glTextureParameteri(framebufferDesc.m_nRenderTextureId, GL_TEXTURE_SRGB_DECODE_EXT, GL_DECODE_EXT);
-  glLabelObjectEXT(GL_TEXTURE, framebufferDesc.m_nRenderTextureId, 0, "TempBuffer 6 1599x1689");
-  glTextureParameteri(framebufferDesc.m_nRenderTextureId, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-  glTextureParameteri(framebufferDesc.m_nRenderTextureId, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-  glTextureParameteri(framebufferDesc.m_nRenderTextureId, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
-  glTextureParameteri(framebufferDesc.m_nRenderTextureId, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-  glTextureParameteri(framebufferDesc.m_nRenderTextureId, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-  glTextureParameteri(framebufferDesc.m_nRenderTextureId, GL_TEXTURE_MAX_ANISOTROPY_EXT, 9);
-  glTextureParameterf(framebufferDesc.m_nRenderTextureId, GL_TEXTURE_LOD_BIAS, 0);
-  glTextureParameteri(framebufferDesc.m_nRenderTextureId, GL_TEXTURE_SRGB_DECODE_EXT, GL_DECODE_EXT);
+  glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8, nWidth, nHeight);
 	glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, framebufferDesc.m_nRenderTextureId, 0);
 #endif
 
