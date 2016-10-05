@@ -32,6 +32,17 @@ void ThreadSleep( unsigned long nMilliseconds )
 #endif
 }
 
+struct TerrainAggVertex {
+	uint8_t aPosition[4];  // Passthrough from MeshVertex0.
+	int8_t aNormal[3];  // Passthrough from MeshVertex0.
+	int8_t pad0;
+	uint16_t aTexCoord[2];  // Scaled, translated texcoord into uMeshTextureAtlas.
+	uint16_t aTexCoordRectIndex;  // Index into uTexCoordRectArray.
+	uint16_t pad1;
+	uint8_t aMeshToWorldMatrixIndex;  // Index into uMeshToWorldMatrixArray.
+	uint8_t pad2[3];
+};
+
 class CGLRenderModel
 {
 public:
@@ -45,13 +56,14 @@ public:
 	const std::string & GetName() const { return m_sModelName; }
 
 private:
-	static const size_t kNumObjects = 10;
+	static const size_t kNumVAOs = 3;
+	static const size_t kNumIndicesToDraw = 51978;
 
 	void BInitInternal(const vector<vr::RenderModel_Vertex_t>& vertices, const vector<uint32_t>& indices, size_t i);
 
-	GLuint m_glVertBuffer[kNumObjects];
-	GLuint m_glIndexBuffer[kNumObjects];
-	GLuint m_glVertArray[kNumObjects];
+	GLuint m_glVertBuffer[kNumVAOs];
+	GLuint m_glIndexBuffer[kNumVAOs];
+	GLuint m_glVertArray[kNumVAOs];
 	GLuint m_glTexture;
 	GLsizei m_unVertexCount;
 	std::string m_sModelName;
@@ -947,7 +959,7 @@ void CMainApplication::SetupScene()
 		}
 		mat = mat * Matrix4().translate( 0, -((float)m_iSceneVolumeHeight) * m_fScaleSpacing, m_fScaleSpacing );
 	}
-	m_uiVertcount = vertdataarray.size()/5;
+	m_uiVertcount = (unsigned int)(vertdataarray.size()/5);
 	
 	glGenVertexArrays( 1, &m_unSceneVAO );
 	glBindVertexArray( m_unSceneVAO );
@@ -1118,11 +1130,11 @@ void CMainApplication::DrawControllers()
 		GLuint offset = 0;
 
 		glEnableVertexAttribArray( 0 );
-		glVertexAttribPointer( 0, 3, GL_FLOAT, GL_FALSE, stride, (const void *)offset);
+		glVertexAttribPointer( 0, 3, GL_FLOAT, GL_FALSE, stride, (const void *)(size_t)offset);
 
 		offset += sizeof( Vector3 );
 		glEnableVertexAttribArray( 1 );
-		glVertexAttribPointer( 1, 3, GL_FLOAT, GL_FALSE, stride, (const void *)offset);
+		glVertexAttribPointer( 1, 3, GL_FLOAT, GL_FALSE, stride, (const void *)(size_t)offset);
 
 		glBindVertexArray( 0 );
 	}
@@ -1300,7 +1312,7 @@ void CMainApplication::SetupDistortion()
 			vIndices.push_back( d );
 		}
 	}
-	m_uiIndexSize = vIndices.size();
+	m_uiIndexSize = (unsigned int)vIndices.size();
 
 	glGenVertexArrays( 1, &m_unLensVAO );
 	glBindVertexArray( m_unLensVAO );
@@ -1455,7 +1467,7 @@ void CMainApplication::RenderDistortion()
 	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE );
 	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR );
 	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR );
-	glDrawElements( GL_TRIANGLES, m_uiIndexSize/2, GL_UNSIGNED_SHORT, (const void *)(m_uiIndexSize) );
+	glDrawElements( GL_TRIANGLES, m_uiIndexSize/2, GL_UNSIGNED_SHORT, (const void *)(size_t)(m_uiIndexSize) );
 
 	glBindVertexArray( 0 );
 	glUseProgram( 0 );
@@ -1646,7 +1658,7 @@ CGLRenderModel::CGLRenderModel( const std::string & sRenderModelName )
 	: m_sModelName( sRenderModelName ),
 	  current_index_(0)
 {
-	for (size_t i = 0; i < kNumObjects; ++i) {
+	for (size_t i = 0; i < kNumVAOs; ++i) {
 		m_glIndexBuffer[i] = 0;
 		m_glVertArray[i] = 0;
 		m_glVertBuffer[i] = 0;
@@ -1692,14 +1704,14 @@ bool CGLRenderModel::BInit( const vr::RenderModel_t & vrModel, const vr::RenderM
 	vector<uint32_t> indices(num_indices * 4);
 	for (size_t i = 0; i < num_indices; ++i) {
 		// Make index reference to the last part of the vertices.
-		const uint32_t index = (uint32_t)vrModel.rIndexData[i] + num_vertices * 9;
+		const uint32_t index = (uint32_t)(vrModel.rIndexData[i] + num_vertices * 9);
 		indices[i] = index;
 		indices[i + num_indices] = index;
 		indices[i + num_indices * 2] = index;
 		indices[i + num_indices * 3] = index;
 	}
 
-	for (size_t i = 0; i < kNumObjects; ++i) {
+	for (size_t i = 0; i < kNumVAOs; ++i) {
 		BInitInternal(vertices, indices, i);
 	}
 
@@ -1736,32 +1748,31 @@ bool CGLRenderModel::BInit(const char* file_path)
 
 	uint32_t num_vertices = 0;
 	fread(&num_vertices, sizeof(uint32_t), 1, fp);
-	// Make a 10x larger vertex buffer to allow big index values.
-	vector<vr::RenderModel_Vertex_t> vertices(num_vertices * 10);
+	vector<vr::RenderModel_Vertex_t> vertices(num_vertices);
 	fread(vertices.data(), sizeof(vr::RenderModel_Vertex_t), num_vertices, fp);
-	for (size_t i = 0; i < num_vertices; ++i) {
+	/*for (size_t i = 0; i < num_vertices; ++i) {
 		for (size_t j = 1; j < 10; ++j) {
 			vertices[i + j * num_vertices] = vertices[i];
 		}
-	}
+	}*/
 
 	uint32_t num_triangles = 0;
 	fread(&num_triangles, sizeof(uint32_t), 1, fp);
 	const uint32_t num_indices = num_triangles * 3;
 	vector<uint16_t> indices16(num_indices);
 	fread(indices16.data(), sizeof(uint16_t), num_indices, fp);
-	// Convert indices to 32-bit integers. Duplicate the indices 4x so we can specify large offset.
-	vector<uint32_t> indices(num_indices * 4);
+	// Convert indices to 32-bit integers.
+	vector<uint32_t> indices(num_indices);
 	for (size_t i = 0; i < num_indices; ++i) {
 		// Make index reference to the last part of the vertices.
-		const uint32_t index = (uint32_t)indices16[i] + num_vertices * 9;
-		indices[i] = index;
-		indices[i + num_indices] = index;
+		//const uint32_t index = (uint32_t)indices16[i] + num_vertices * 9;
+		indices[i] = (uint32_t)indices16[i];
+		/*indices[i + num_indices] = index;
 		indices[i + num_indices * 2] = index;
-		indices[i + num_indices * 3] = index;
+		indices[i + num_indices * 3] = index;*/
 	}
 
-	for (size_t i = 0; i < kNumObjects; ++i) {
+	for (size_t i = 0; i < kNumVAOs; ++i) {
 		BInitInternal(vertices, indices, i);
 	}
 
@@ -1809,7 +1820,17 @@ void CGLRenderModel::BInitInternal(const vector<vr::RenderModel_Vertex_t>& verti
 	// Populate a vertex buffer
 	glGenBuffers(1, &m_glVertBuffer[i]);
 	glBindBuffer(GL_ARRAY_BUFFER, m_glVertBuffer[i]);
-	glBufferData(GL_ARRAY_BUFFER, sizeof(vr::RenderModel_Vertex_t) * vertices.size(), vertices.data(), GL_DYNAMIC_DRAW);
+	const size_t vbo_size_in_bytes = 40740000U;
+	glBufferData(GL_ARRAY_BUFFER, vbo_size_in_bytes, nullptr, GL_DYNAMIC_DRAW);
+	// Duplicate |vertices| data to fully fill the VBO.
+	{
+		size_t offset = 0;
+		const size_t data_size_in_bytes = sizeof(vr::RenderModel_Vertex_t) * vertices.size();
+		while (offset + data_size_in_bytes <= vbo_size_in_bytes) {
+			glBufferSubData(GL_ARRAY_BUFFER, offset, data_size_in_bytes, vertices.data());
+			offset += data_size_in_bytes;
+		}
+	}
 
 	// Identify the components in the vertex buffer
 	glEnableVertexAttribArray(0);
@@ -1822,7 +1843,24 @@ void CGLRenderModel::BInitInternal(const vector<vr::RenderModel_Vertex_t>& verti
 	// Create and populate the index buffer
 	glGenBuffers(1, &m_glIndexBuffer[i]);
 	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, m_glIndexBuffer[i]);
-	glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(uint32_t) * indices.size(), indices.data(), GL_DYNAMIC_DRAW);
+	const size_t index_buffer_size_in_bytes = 19012000U;
+	glBufferData(GL_ELEMENT_ARRAY_BUFFER, index_buffer_size_in_bytes, nullptr, GL_DYNAMIC_DRAW);
+	// Duplicate |indices| data to fully fill the VBO.
+	{
+		size_t offset = 0;
+		const size_t data_size_in_bytes = sizeof(uint32_t) * indices.size();
+		size_t vertex_offset = 0;
+		while (offset + data_size_in_bytes <= index_buffer_size_in_bytes) {
+			vector<uint32_t> offseted_indices = indices;
+			for (auto& index : offseted_indices) {
+				index += (uint32_t)vertex_offset;
+			}
+			glBufferSubData(GL_ELEMENT_ARRAY_BUFFER, offset, data_size_in_bytes, offseted_indices.data());
+			offset += data_size_in_bytes;
+			// 3 times number of vertices, so indices will reference into vertices that are deep into the VBO.
+			vertex_offset += 3 * vertices.size();
+		}
+	}
 
 	glBindVertexArray(0);
 }
@@ -1834,10 +1872,10 @@ void CGLRenderModel::Cleanup()
 {
 	if( m_glVertBuffer )
 	{
-		glDeleteBuffers(kNumObjects, m_glIndexBuffer);
-		glDeleteVertexArrays(kNumObjects, m_glVertArray);
-		glDeleteBuffers(kNumObjects, m_glVertBuffer);
-		for (size_t i = 0; i < kNumObjects; ++i) {
+		glDeleteBuffers(kNumVAOs, m_glIndexBuffer);
+		glDeleteVertexArrays(kNumVAOs, m_glVertArray);
+		glDeleteBuffers(kNumVAOs, m_glVertBuffer);
+		for (size_t i = 0; i < kNumVAOs; ++i) {
 			m_glIndexBuffer[i] = 0;
 			m_glVertArray[i] = 0;
 			m_glVertBuffer[i] = 0;
@@ -1851,19 +1889,13 @@ void CGLRenderModel::Cleanup()
 //-----------------------------------------------------------------------------
 void CGLRenderModel::Draw()
 {
-	static const size_t kNumObjectInOneDraw = 3;
-	for (size_t i = 0; i < kNumObjectInOneDraw; ++i) {
-		glBindVertexArray(m_glVertArray[current_index_]);
-
+	for (size_t i = 0; i < kNumVAOs; ++i) {
+		glBindVertexArray(m_glVertArray[i]);
 		glActiveTexture( GL_TEXTURE0 );
-		glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, m_glIndexBuffer[current_index_]);  // TODO: necessary?
+		glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, m_glIndexBuffer[i]);  // TODO: necessary?
 		glBindTexture( GL_TEXTURE_2D, m_glTexture );
-
-		for (size_t j = 0; j < 5; ++j) {
-			glDrawElements(GL_TRIANGLES, m_unVertexCount - (4 - j) * 3 * 10, GL_UNSIGNED_INT,
-				(const void*)(m_unVertexCount * sizeof(uint32_t) * 3));
-		}
-		current_index_ = (current_index_ + 1) % kNumObjects;
+		glDrawElements(GL_TRIANGLES, 262971, GL_UNSIGNED_INT, nullptr);
+		//glDrawElements(GL_TRIANGLES, m_unVertexCount, GL_UNSIGNED_INT, nullptr);
 	}
 
 	glBindVertexArray(0);
