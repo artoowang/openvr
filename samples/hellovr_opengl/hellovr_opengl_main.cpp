@@ -39,6 +39,7 @@ public:
 	~CGLRenderModel();
 
 	bool BInit( const vr::RenderModel_t & vrModel, const vr::RenderModel_TextureMap_t & vrDiffuseTexture );
+	bool BInit(const char* file_path);
 	void Cleanup();
 	void Draw();
 	const std::string & GetName() const { return m_sModelName; }
@@ -70,7 +71,6 @@ public:
 
 	bool BInit();
 	bool BInitGL();
-	bool BInitCompositor();
 
 	void SetupRenderModels();
 
@@ -78,7 +78,6 @@ public:
 
 	void RunMainLoop();
 	bool HandleInput();
-	void ProcessVREvent( const vr::VREvent_t & event );
 	void RenderFrame();
 
 	bool SetupTexturemaps();
@@ -117,11 +116,6 @@ private:
 	bool m_bVblank;
 	bool m_bGlFinishHack;
 
-	vr::IVRSystem *m_pHMD;
-	vr::IVRRenderModels *m_pRenderModels;
-	std::string m_strDriver;
-	std::string m_strDisplay;
-	vr::TrackedDevicePose_t m_rTrackedDevicePose[ vr::k_unMaxTrackedDeviceCount ];
 	Matrix4 m_rmat4DevicePose[ vr::k_unMaxTrackedDeviceCount ];
 	bool m_rbShowTrackedDevice[ vr::k_unMaxTrackedDeviceCount ];
 
@@ -254,8 +248,6 @@ CMainApplication::CMainApplication( int argc, char *argv[] )
 	, m_unLensProgramID( 0 )
 	, m_unControllerTransformProgramID( 0 )
 	, m_unRenderModelProgramID( 0 )
-	, m_pHMD( NULL )
-	, m_pRenderModels( NULL )
 	, m_bDebugOpenGL( false )
 	, m_bVerbose( false )
 	, m_bPerf( false )
@@ -321,24 +313,6 @@ CMainApplication::~CMainApplication()
 
 
 //-----------------------------------------------------------------------------
-// Purpose: Helper to get a string from a tracked device property and turn it
-//			into a std::string
-//-----------------------------------------------------------------------------
-std::string GetTrackedDeviceString( vr::IVRSystem *pHmd, vr::TrackedDeviceIndex_t unDevice, vr::TrackedDeviceProperty prop, vr::TrackedPropertyError *peError = NULL )
-{
-	uint32_t unRequiredBufferLen = pHmd->GetStringTrackedDeviceProperty( unDevice, prop, NULL, 0, peError );
-	if( unRequiredBufferLen == 0 )
-		return "";
-
-	char *pchBuffer = new char[ unRequiredBufferLen ];
-	unRequiredBufferLen = pHmd->GetStringTrackedDeviceProperty( unDevice, prop, pchBuffer, unRequiredBufferLen, peError );
-	std::string sResult = pchBuffer;
-	delete [] pchBuffer;
-	return sResult;
-}
-
-
-//-----------------------------------------------------------------------------
 // Purpose:
 //-----------------------------------------------------------------------------
 bool CMainApplication::BInit()
@@ -346,32 +320,6 @@ bool CMainApplication::BInit()
 	if ( SDL_Init( SDL_INIT_VIDEO | SDL_INIT_TIMER ) < 0 )
 	{
 		printf("%s - SDL could not initialize! SDL Error: %s\n", __FUNCTION__, SDL_GetError());
-		return false;
-	}
-
-	// Loading the SteamVR Runtime
-	vr::EVRInitError eError = vr::VRInitError_None;
-	m_pHMD = vr::VR_Init( &eError, vr::VRApplication_Scene );
-
-	if ( eError != vr::VRInitError_None )
-	{
-		m_pHMD = NULL;
-		char buf[1024];
-		sprintf_s( buf, sizeof( buf ), "Unable to init VR runtime: %s", vr::VR_GetVRInitErrorAsEnglishDescription( eError ) );
-		SDL_ShowSimpleMessageBox( SDL_MESSAGEBOX_ERROR, "VR_Init Failed", buf, NULL );
-		return false;
-	}
-
-
-	m_pRenderModels = (vr::IVRRenderModels *)vr::VR_GetGenericInterface( vr::IVRRenderModels_Version, &eError );
-	if( !m_pRenderModels )
-	{
-		m_pHMD = NULL;
-		vr::VR_Shutdown();
-
-		char buf[1024];
-		sprintf_s( buf, sizeof( buf ), "Unable to get render model interface: %s", vr::VR_GetVRInitErrorAsEnglishDescription( eError ) );
-		SDL_ShowSimpleMessageBox( SDL_MESSAGEBOX_ERROR, "VR_Init Failed", buf, NULL );
 		return false;
 	}
 
@@ -421,14 +369,7 @@ bool CMainApplication::BInit()
 	}
 
 
-	m_strDriver = "No Driver";
-	m_strDisplay = "No Display";
-
-	m_strDriver = GetTrackedDeviceString( m_pHMD, vr::k_unTrackedDeviceIndex_Hmd, vr::Prop_TrackingSystemName_String );
-	m_strDisplay = GetTrackedDeviceString( m_pHMD, vr::k_unTrackedDeviceIndex_Hmd, vr::Prop_SerialNumber_String );
-
-	std::string strWindowTitle = "hellovr_sdl - " + m_strDriver + " " + m_strDisplay;
-	SDL_SetWindowTitle( m_pWindow, strWindowTitle.c_str() );
+	SDL_SetWindowTitle( m_pWindow, "hellovr_sdl" );
 	
 	// cube array
  	m_iSceneVolumeWidth = m_iSceneVolumeInit;
@@ -450,12 +391,6 @@ bool CMainApplication::BInit()
 	if (!BInitGL())
 	{
 		printf("%s - Unable to initialize OpenGL!\n", __FUNCTION__);
-		return false;
-	}
-
-	if (!BInitCompositor())
-	{
-		printf("%s - Failed to initialize VR Compositor!\n", __FUNCTION__);
 		return false;
 	}
 
@@ -502,31 +437,8 @@ bool CMainApplication::BInitGL()
 //-----------------------------------------------------------------------------
 // Purpose:
 //-----------------------------------------------------------------------------
-bool CMainApplication::BInitCompositor()
-{
-	vr::EVRInitError peError = vr::VRInitError_None;
-
-	if ( !vr::VRCompositor() )
-	{
-		printf( "Compositor initialization failed. See log file for details\n" );
-		return false;
-	}
-
-	return true;
-}
-
-
-//-----------------------------------------------------------------------------
-// Purpose:
-//-----------------------------------------------------------------------------
 void CMainApplication::Shutdown()
 {
-	if( m_pHMD )
-	{
-		vr::VR_Shutdown();
-		m_pHMD = NULL;
-	}
-
 	for( std::vector< CGLRenderModel * >::iterator i = m_vecRenderModels.begin(); i != m_vecRenderModels.end(); i++ )
 	{
 		delete (*i);
@@ -637,23 +549,6 @@ bool CMainApplication::HandleInput()
 		}
 	}
 
-	// Process SteamVR events
-	vr::VREvent_t event;
-	while( m_pHMD->PollNextEvent( &event, sizeof( event ) ) )
-	{
-		ProcessVREvent( event );
-	}
-
-	// Process SteamVR controller state
-	for( vr::TrackedDeviceIndex_t unDevice = 0; unDevice < vr::k_unMaxTrackedDeviceCount; unDevice++ )
-	{
-		vr::VRControllerState_t state;
-		if( m_pHMD->GetControllerState( unDevice, &state ) )
-		{
-			m_rbShowTrackedDevice[ unDevice ] = state.ulButtonPressed == 0;
-		}
-	}
-
 	return bRet;
 }
 
@@ -677,32 +572,6 @@ void CMainApplication::RunMainLoop()
 	SDL_StopTextInput();
 }
 
-
-//-----------------------------------------------------------------------------
-// Purpose: Processes a single VR event
-//-----------------------------------------------------------------------------
-void CMainApplication::ProcessVREvent( const vr::VREvent_t & event )
-{
-	switch( event.eventType )
-	{
-	case vr::VREvent_TrackedDeviceActivated:
-		{
-			SetupRenderModelForTrackedDevice( event.trackedDeviceIndex );
-			dprintf( "Device %u attached. Setting up render model.\n", event.trackedDeviceIndex );
-		}
-		break;
-	case vr::VREvent_TrackedDeviceDeactivated:
-		{
-			dprintf( "Device %u detached.\n", event.trackedDeviceIndex );
-		}
-		break;
-	case vr::VREvent_TrackedDeviceUpdated:
-		{
-			dprintf( "Device %u updated.\n", event.trackedDeviceIndex );
-		}
-		break;
-	}
-}
 
 double GetTimestampInSeconds() {
   LARGE_INTEGER li_freq;
@@ -747,23 +616,11 @@ void CMainApplication::RenderFrame()
   ScopedTimer timer(frame_time_buffer_, "Frame");
 
 	// for now as fast as possible
-	if ( m_pHMD )
 	{
-    ScopedTimer timer(render_time_buffer_, "Render");
+		ScopedTimer timer(render_time_buffer_, "Render");
 		DrawControllers();
 		RenderStereoTargets();
 		RenderDistortion();
-
-		vr::Texture_t leftEyeTexture = {(void*)leftEyeDesc.m_nResolveTextureId, vr::API_OpenGL, vr::ColorSpace_Gamma };
-    {
-      ScopedTimer timer(submit0_buffer_, "Submit0");
-		  vr::VRCompositor()->Submit(vr::Eye_Left, &leftEyeTexture );
-    }
-		vr::Texture_t rightEyeTexture = {(void*)rightEyeDesc.m_nResolveTextureId, vr::API_OpenGL, vr::ColorSpace_Gamma };
-    {
-      ScopedTimer timer(submit1_buffer_, "Submit1");
-		  vr::VRCompositor()->Submit(vr::Eye_Right, &rightEyeTexture );
-    }
 	}
 
 	if ( m_bVblank && m_bGlFinishHack )
@@ -1065,9 +922,6 @@ bool CMainApplication::SetupTexturemaps()
 //-----------------------------------------------------------------------------
 void CMainApplication::SetupScene()
 {
-	if ( !m_pHMD )
-		return;
-
 	std::vector<float> vertdataarray;
 
 	Matrix4 matScale;
@@ -1200,10 +1054,6 @@ void CMainApplication::AddCubeToScene( Matrix4 mat, std::vector<float> &vertdata
 //-----------------------------------------------------------------------------
 void CMainApplication::DrawControllers()
 {
-	// don't draw controllers if somebody else has input focus
-	if( m_pHMD->IsInputFocusCapturedByAnotherProcess() )
-		return;
-
 	std::vector<float> vertdataarray;
 
 	m_uiControllerVertcount = 0;
@@ -1211,16 +1061,7 @@ void CMainApplication::DrawControllers()
 
 	for ( vr::TrackedDeviceIndex_t unTrackedDevice = vr::k_unTrackedDeviceIndex_Hmd + 1; unTrackedDevice < vr::k_unMaxTrackedDeviceCount; ++unTrackedDevice )
 	{
-		if ( !m_pHMD->IsTrackedDeviceConnected( unTrackedDevice ) )
-			continue;
-
-		if( m_pHMD->GetTrackedDeviceClass( unTrackedDevice ) != vr::TrackedDeviceClass_Controller )
-			continue;
-
 		m_iTrackedControllerCount += 1;
-
-		if( !m_rTrackedDevicePose[ unTrackedDevice ].bPoseIsValid )
-			continue;
 
 		const Matrix4 & mat = m_rmat4DevicePose[unTrackedDevice];
 
@@ -1355,10 +1196,8 @@ bool CMainApplication::CreateFrameBuffer( int nWidth, int nHeight, FramebufferDe
 //-----------------------------------------------------------------------------
 bool CMainApplication::SetupStereoRenderTargets()
 {
-	if ( !m_pHMD )
-		return false;
-
-	m_pHMD->GetRecommendedRenderTargetSize( &m_nRenderWidth, &m_nRenderHeight );
+	m_nRenderWidth = 1512;
+	m_nRenderHeight = 1680;
 
 	CreateFrameBuffer( m_nRenderWidth, m_nRenderHeight, leftEyeDesc );
 	CreateFrameBuffer( m_nRenderWidth, m_nRenderHeight, rightEyeDesc );
@@ -1372,9 +1211,6 @@ bool CMainApplication::SetupStereoRenderTargets()
 //-----------------------------------------------------------------------------
 void CMainApplication::SetupDistortion()
 {
-	if ( !m_pHMD )
-		return;
-
 	GLushort m_iLensGridSegmentCountH = 43;
 	GLushort m_iLensGridSegmentCountV = 43;
 
@@ -1395,7 +1231,7 @@ void CMainApplication::SetupDistortion()
 			u = x*w; v = 1-y*h;
 			vert.position = Vector2( Xoffset+u, -1+2*y*h );
 
-			vr::DistortionCoordinates_t dc0 = m_pHMD->ComputeDistortion(vr::Eye_Left, u, v);
+			vr::DistortionCoordinates_t dc0 = { { u, v }, { u, v }, { u, v } };
 
 			vert.texCoordRed = Vector2(dc0.rfRed[0], 1 - dc0.rfRed[1]);
 			vert.texCoordGreen =  Vector2(dc0.rfGreen[0], 1 - dc0.rfGreen[1]);
@@ -1414,7 +1250,7 @@ void CMainApplication::SetupDistortion()
 			u = x*w; v = 1-y*h;
 			vert.position = Vector2( Xoffset+u, -1+2*y*h );
 
-			vr::DistortionCoordinates_t dc0 = m_pHMD->ComputeDistortion( vr::Eye_Right, u, v );
+			vr::DistortionCoordinates_t dc0 = { { u, v }, { u, v }, { u, v } };
 
 			vert.texCoordRed = Vector2(dc0.rfRed[0], 1 - dc0.rfRed[1]);
 			vert.texCoordGreen = Vector2(dc0.rfGreen[0], 1 - dc0.rfGreen[1]);
@@ -1567,17 +1403,13 @@ void CMainApplication::RenderScene( vr::Hmd_Eye nEye )
 		glBindVertexArray( 0 );
 	}
 
-	bool bIsInputCapturedByAnotherProcess = m_pHMD->IsInputFocusCapturedByAnotherProcess();
 
-	if( !bIsInputCapturedByAnotherProcess )
-	{
-		// draw the controller axis lines
-		glUseProgram( m_unControllerTransformProgramID );
-		glUniformMatrix4fv( m_nControllerMatrixLocation, 1, GL_FALSE, GetCurrentViewProjectionMatrix( nEye ).get() );
-		glBindVertexArray( m_unControllerVAO );
-		glDrawArrays( GL_LINES, 0, m_uiControllerVertcount );
-		glBindVertexArray( 0 );
-	}
+	// draw the controller axis lines
+	glUseProgram( m_unControllerTransformProgramID );
+	glUniformMatrix4fv( m_nControllerMatrixLocation, 1, GL_FALSE, GetCurrentViewProjectionMatrix( nEye ).get() );
+	glBindVertexArray( m_unControllerVAO );
+	glDrawArrays( GL_LINES, 0, m_uiControllerVertcount );
+	glBindVertexArray( 0 );
 
 	// ----- Render Model rendering -----
 	glUseProgram( m_unRenderModelProgramID );
@@ -1585,13 +1417,6 @@ void CMainApplication::RenderScene( vr::Hmd_Eye nEye )
 	for( uint32_t unTrackedDevice = 0; unTrackedDevice < vr::k_unMaxTrackedDeviceCount; unTrackedDevice++ )
 	{
 		if( !m_rTrackedDeviceToRenderModel[ unTrackedDevice ] || !m_rbShowTrackedDevice[ unTrackedDevice ] )
-			continue;
-
-		const vr::TrackedDevicePose_t & pose = m_rTrackedDevicePose[ unTrackedDevice ];
-		if( !pose.bPoseIsValid )
-			continue;
-
-		if( bIsInputCapturedByAnotherProcess && m_pHMD->GetTrackedDeviceClass( unTrackedDevice ) == vr::TrackedDeviceClass_Controller )
 			continue;
 
 		const Matrix4 & matDeviceToTracking = m_rmat4DevicePose[ unTrackedDevice ];
@@ -1642,17 +1467,20 @@ void CMainApplication::RenderDistortion()
 //-----------------------------------------------------------------------------
 Matrix4 CMainApplication::GetHMDMatrixProjectionEye( vr::Hmd_Eye nEye )
 {
-	if ( !m_pHMD )
-		return Matrix4();
-
-	vr::HmdMatrix44_t mat = m_pHMD->GetProjectionMatrix( nEye, m_fNearClip, m_fFarClip, vr::API_OpenGL);
-
-	return Matrix4(
-		mat.m[0][0], mat.m[1][0], mat.m[2][0], mat.m[3][0],
-		mat.m[0][1], mat.m[1][1], mat.m[2][1], mat.m[3][1], 
-		mat.m[0][2], mat.m[1][2], mat.m[2][2], mat.m[3][2], 
-		mat.m[0][3], mat.m[1][3], mat.m[2][3], mat.m[3][3]
-	);
+	if (nEye == vr::Hmd_Eye::Eye_Left) {
+		return Matrix4(
+			0.757585824f, 0.000000000f, 0.000000000f, 0.000000000f,
+			0.000000000f, 0.681940317f, 0.000000000f, 0.000000000f,
+			-0.0568149090f, 9.85278675e-05f, -1.00334454f, -1.00000000f,
+			0.000000000f, 0.000000000f, -0.100334451f, 0.000000000f);
+	}
+	else {
+		return Matrix4(
+			0.758769333f, 0.000000000f, 0.000000000f, 0.000000000f,
+			0.000000000f, 0.682856500f, 0.000000000f, 0.000000000f,
+			0.0570514202f, -0.00101399445f, -1.00334454f, -1.00000000f,
+			0.000000000f, 0.000000000f, -0.100334451f, 0.000000000f);
+	}
 }
 
 
@@ -1661,18 +1489,22 @@ Matrix4 CMainApplication::GetHMDMatrixProjectionEye( vr::Hmd_Eye nEye )
 //-----------------------------------------------------------------------------
 Matrix4 CMainApplication::GetHMDMatrixPoseEye( vr::Hmd_Eye nEye )
 {
-	if ( !m_pHMD )
-		return Matrix4();
-
-	vr::HmdMatrix34_t matEyeRight = m_pHMD->GetEyeToHeadTransform( nEye );
-	Matrix4 matrixObj(
-		matEyeRight.m[0][0], matEyeRight.m[1][0], matEyeRight.m[2][0], 0.0, 
-		matEyeRight.m[0][1], matEyeRight.m[1][1], matEyeRight.m[2][1], 0.0,
-		matEyeRight.m[0][2], matEyeRight.m[1][2], matEyeRight.m[2][2], 0.0,
-		matEyeRight.m[0][3], matEyeRight.m[1][3], matEyeRight.m[2][3], 1.0f
-		);
-
-	return matrixObj.invert();
+	if (nEye == vr::Hmd_Eye::Eye_Left) {
+		return Matrix4(
+			1.0f, 0.0f, 0.0f, 0.0f,
+			0.0f, 1.0f, 0.0f, 0.0f,
+			0.0f, 0.0f, 1.0f, 0.0f,
+			-0.0311999992f, 0.0f, 0.0149999997f, 1.0f
+		).invert();
+	}
+	else {
+		return Matrix4(
+			1.0f, 0.0f, 0.0f, 0.0f,
+			0.0f, 1.0f, 0.0f, 0.0f,
+			0.0f, 0.0f, 1.0f, 0.0f,
+			0.0311999992f, 0.0f, 0.0149999997f, 1.0f
+		).invert();
+	}
 }
 
 
@@ -1700,39 +1532,20 @@ Matrix4 CMainApplication::GetCurrentViewProjectionMatrix( vr::Hmd_Eye nEye )
 //-----------------------------------------------------------------------------
 void CMainApplication::UpdateHMDMatrixPose()
 {
-	if ( !m_pHMD )
-		return;
+	m_iValidPoseCount = 5;
+	m_strPoseClasses = "HTTCC";
+	m_rmat4DevicePose[0] = Matrix4(0.660372f, 0.005540f, -0.750918f, 0.000000f, 0.124383f, 0.985353f, 0.116655f, 0.000000f, 0.740566f, -0.170437f, 0.650010f, 0.000000f, -0.762210f, 0.816847f, 0.476603f, 1.000000f);
+	m_rDevClassChar[0] = 'H';
+	m_rmat4DevicePose[1] = Matrix4(-0.719325f, 0.043348f, -0.693320f, 0.000000f, -0.112347f, 0.977653f, 0.177686f, 0.000000f, 0.685529f, 0.205706f, -0.698380f, 0.000000f, 2.403435f, 2.413503f, -1.104088f, 1.000000f);
+	m_rDevClassChar[1] = 'T';
+	m_rmat4DevicePose[2] = Matrix4(0.996386f, 0.032452f, -0.078497f, 0.000000f, -0.024020f, -0.778762f, -0.626859f, 0.000000f, -0.081473f, 0.626479f, -0.775168f, 0.000000f, -0.018010f, 3.142777f, -0.990557f, 1.000000f);
+	m_rDevClassChar[2] = 'T';
+	m_rmat4DevicePose[3] = Matrix4(0.544623f, -0.146795f, 0.825734f, 0.000000f, -0.116081f, 0.961893f, 0.247564f, 0.000000f, -0.830609f, -0.230681f, 0.506829f, 0.000000f, -0.935668f, 0.832183f, 0.417553f, 1.000000f);
+	m_rDevClassChar[3] = 'C';
+	m_rmat4DevicePose[4] = Matrix4(0.869483f, 0.196030f, 0.453399f, 0.000000f, -0.309990f, 0.931179f, 0.191867f, 0.000000f, -0.384584f, -0.307374f, 0.870412f, 0.000000f, -1.001555f, 0.838425f, 0.263718f, 1.000000f);
+	m_rDevClassChar[4] = 'C';
 
-	vr::VRCompositor()->WaitGetPoses(m_rTrackedDevicePose, vr::k_unMaxTrackedDeviceCount, NULL, 0 );
-
-	m_iValidPoseCount = 0;
-	m_strPoseClasses = "";
-	for ( int nDevice = 0; nDevice < vr::k_unMaxTrackedDeviceCount; ++nDevice )
-	{
-		if ( m_rTrackedDevicePose[nDevice].bPoseIsValid )
-		{
-			m_iValidPoseCount++;
-			m_rmat4DevicePose[nDevice] = ConvertSteamVRMatrixToMatrix4( m_rTrackedDevicePose[nDevice].mDeviceToAbsoluteTracking );
-			if (m_rDevClassChar[nDevice]==0)
-			{
-				switch (m_pHMD->GetTrackedDeviceClass(nDevice))
-				{
-				case vr::TrackedDeviceClass_Controller:        m_rDevClassChar[nDevice] = 'C'; break;
-				case vr::TrackedDeviceClass_HMD:               m_rDevClassChar[nDevice] = 'H'; break;
-				case vr::TrackedDeviceClass_Invalid:           m_rDevClassChar[nDevice] = 'I'; break;
-				case vr::TrackedDeviceClass_Other:             m_rDevClassChar[nDevice] = 'O'; break;
-				case vr::TrackedDeviceClass_TrackingReference: m_rDevClassChar[nDevice] = 'T'; break;
-				default:                                       m_rDevClassChar[nDevice] = '?'; break;
-				}
-			}
-			m_strPoseClasses += m_rDevClassChar[nDevice];
-		}
-	}
-
-	if ( m_rTrackedDevicePose[vr::k_unTrackedDeviceIndex_Hmd].bPoseIsValid )
-	{
-		m_mat4HMDPose = m_rmat4DevicePose[vr::k_unTrackedDeviceIndex_Hmd].invert();
-	}
+	m_mat4HMDPose = m_rmat4DevicePose[0].invert();
 }
 
 
@@ -1754,53 +1567,10 @@ CGLRenderModel *CMainApplication::FindOrLoadRenderModel( const char *pchRenderMo
 	// load the model if we didn't find one
 	if( !pRenderModel )
 	{
-		vr::RenderModel_t *pModel;
-		vr::EVRRenderModelError error;
-		while ( 1 )
-		{
-			error = vr::VRRenderModels()->LoadRenderModel_Async( pchRenderModelName, &pModel );
-			if ( error != vr::VRRenderModelError_Loading )
-				break;
-
-			ThreadSleep( 1 );
-		}
-
-		if ( error != vr::VRRenderModelError_None )
-		{
-			dprintf( "Unable to load render model %s - %s\n", pchRenderModelName, vr::VRRenderModels()->GetRenderModelErrorNameFromEnum( error ) );
-			return NULL; // move on to the next tracked device
-		}
-
-		vr::RenderModel_TextureMap_t *pTexture;
-		while ( 1 )
-		{
-			error = vr::VRRenderModels()->LoadTexture_Async( pModel->diffuseTextureId, &pTexture );
-			if ( error != vr::VRRenderModelError_Loading )
-				break;
-
-			ThreadSleep( 1 );
-		}
-
-		if ( error != vr::VRRenderModelError_None )
-		{
-			dprintf( "Unable to load render texture id:%d for render model %s\n", pModel->diffuseTextureId, pchRenderModelName );
-			vr::VRRenderModels()->FreeRenderModel( pModel );
-			return NULL; // move on to the next tracked device
-		}
-
-		pRenderModel = new CGLRenderModel( pchRenderModelName );
-		if ( !pRenderModel->BInit( *pModel, *pTexture ) )
-		{
-			dprintf( "Unable to create GL model from render model %s\n", pchRenderModelName );
-			delete pRenderModel;
-			pRenderModel = NULL;
-		}
-		else
-		{
-			m_vecRenderModels.push_back( pRenderModel );
-		}
-		vr::VRRenderModels()->FreeRenderModel( pModel );
-		vr::VRRenderModels()->FreeTexture( pTexture );
+		pRenderModel = new CGLRenderModel(pchRenderModelName);
+		const std::string file_path = std::string(pchRenderModelName) + ".model";
+		pRenderModel->BInit(file_path.c_str());
+		m_vecRenderModels.push_back(pRenderModel);
 	}
 	return pRenderModel;
 }
@@ -1814,13 +1584,21 @@ void CMainApplication::SetupRenderModelForTrackedDevice( vr::TrackedDeviceIndex_
 	if( unTrackedDeviceIndex >= vr::k_unMaxTrackedDeviceCount )
 		return;
 
-	// try to find a model we've already set up
-	std::string sRenderModelName = GetTrackedDeviceString( m_pHMD, unTrackedDeviceIndex, vr::Prop_RenderModelName_String );
-	CGLRenderModel *pRenderModel = FindOrLoadRenderModel( sRenderModelName.c_str() );
+	std::string sRenderModelName;
+	if (unTrackedDeviceIndex <= 2) {
+		sRenderModelName = "lh_basestation_vive";
+	}
+	else if (unTrackedDeviceIndex <= 4) {
+		sRenderModelName = "vr_controller_vive_1_5";
+	}
+	else {
+		return;
+	}
+
+	CGLRenderModel *pRenderModel = FindOrLoadRenderModel(sRenderModelName.c_str());
 	if( !pRenderModel )
 	{
-		std::string sTrackingSystemName = GetTrackedDeviceString( m_pHMD, unTrackedDeviceIndex, vr::Prop_TrackingSystemName_String );
-		dprintf( "Unable to load render model for tracked device %d (%s.%s)", unTrackedDeviceIndex, sTrackingSystemName.c_str(), sRenderModelName.c_str() );
+		dprintf( "Unable to load render model for tracked device %d (%s)", unTrackedDeviceIndex, sRenderModelName.c_str() );
 	}
 	else
 	{
@@ -1837,14 +1615,8 @@ void CMainApplication::SetupRenderModels()
 {
 	memset( m_rTrackedDeviceToRenderModel, 0, sizeof( m_rTrackedDeviceToRenderModel ) );
 
-	if( !m_pHMD )
-		return;
-
 	for( uint32_t unTrackedDevice = vr::k_unTrackedDeviceIndex_Hmd + 1; unTrackedDevice < vr::k_unMaxTrackedDeviceCount; unTrackedDevice++ )
 	{
-		if( !m_pHMD->IsTrackedDeviceConnected( unTrackedDevice ) )
-			continue;
-
 		SetupRenderModelForTrackedDevice( unTrackedDevice );
 	}
 
@@ -1893,6 +1665,18 @@ CGLRenderModel::~CGLRenderModel()
 //-----------------------------------------------------------------------------
 bool CGLRenderModel::BInit( const vr::RenderModel_t & vrModel, const vr::RenderModel_TextureMap_t & vrDiffuseTexture )
 {
+	// TODO: Used to serialize vr::RenderModel_t and RenderModel_TextureMap_t.
+	FILE* fp = nullptr;
+	fopen_s(&fp, m_sModelName.c_str(), "wb");
+	fwrite(&vrModel.unVertexCount, sizeof(uint32_t), 1, fp);
+	fwrite(vrModel.rVertexData, sizeof(vr::RenderModel_Vertex_t), vrModel.unVertexCount, fp);
+	fwrite(&vrModel.unTriangleCount, sizeof(uint32_t), 1, fp);
+	fwrite(vrModel.rIndexData, sizeof(uint16_t), vrModel.unTriangleCount*3, fp);
+	fwrite(&vrDiffuseTexture.unWidth, sizeof(uint16_t), 1, fp);
+	fwrite(&vrDiffuseTexture.unHeight, sizeof(uint16_t), 1, fp);
+	fwrite(vrDiffuseTexture.rubTextureMapData, 1, vrDiffuseTexture.unWidth * vrDiffuseTexture.unHeight * 4, fp);
+	fclose(fp);
+
 	// Make a 10x larger vertex buffer to allow big index values.
 	const size_t num_vertices = vrModel.unVertexCount;
 	vector<vr::RenderModel_Vertex_t> vertices(num_vertices * 10);
@@ -1940,6 +1724,77 @@ bool CGLRenderModel::BInit( const vr::RenderModel_t & vrModel, const vr::RenderM
 	glBindTexture( GL_TEXTURE_2D, 0 );
 
 	m_unVertexCount = vrModel.unTriangleCount * 3;
+
+	return true;
+}
+
+bool CGLRenderModel::BInit(const char* file_path)
+{
+	FILE* fp = nullptr;
+	fopen_s(&fp, file_path, "rb");
+
+	uint32_t num_vertices = 0;
+	fread(&num_vertices, sizeof(uint32_t), 1, fp);
+	// Make a 10x larger vertex buffer to allow big index values.
+	vector<vr::RenderModel_Vertex_t> vertices(num_vertices * 10);
+	fread(vertices.data(), sizeof(vr::RenderModel_Vertex_t), num_vertices, fp);
+	for (size_t i = 0; i < num_vertices; ++i) {
+		for (size_t j = 1; j < 10; ++j) {
+			vertices[i + j * num_vertices] = vertices[i];
+		}
+	}
+
+	uint32_t num_triangles = 0;
+	fread(&num_triangles, sizeof(uint32_t), 1, fp);
+	const uint32_t num_indices = num_triangles * 3;
+	vector<uint16_t> indices16(num_indices);
+	fread(indices16.data(), sizeof(uint16_t), num_indices, fp);
+	// Convert indices to 32-bit integers. Duplicate the indices 4x so we can specify large offset.
+	vector<uint32_t> indices(num_indices * 4);
+	for (size_t i = 0; i < num_indices; ++i) {
+		// Make index reference to the last part of the vertices.
+		const uint32_t index = (uint32_t)indices16[i] + num_vertices * 9;
+		indices[i] = index;
+		indices[i + num_indices] = index;
+		indices[i + num_indices * 2] = index;
+		indices[i + num_indices * 3] = index;
+	}
+
+	for (size_t i = 0; i < kNumObjects; ++i) {
+		BInitInternal(vertices, indices, i);
+	}
+
+	uint16_t texture_width = 0;
+	uint16_t texture_height = 0;
+	fread(&texture_width, sizeof(uint16_t), 1, fp);
+	fread(&texture_height, sizeof(uint16_t), 1, fp);
+	vector<uint8_t> texture_data(texture_width * texture_height * 4);
+	fread(texture_data.data(), 1, texture_data.size(), fp);
+
+	// create and populate the texture
+	glGenTextures(1, &m_glTexture);
+	glBindTexture(GL_TEXTURE_2D, m_glTexture);
+
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, texture_width, texture_height,
+		0, GL_RGBA, GL_UNSIGNED_BYTE, texture_data.data());
+
+	// If this renders black ask McJohn what's wrong.
+	glGenerateMipmap(GL_TEXTURE_2D);
+
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+
+	GLfloat fLargest;
+	glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT, &fLargest);
+	glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY_EXT, fLargest);
+
+	glBindTexture(GL_TEXTURE_2D, 0);
+
+	m_unVertexCount = num_indices;
+
+	fclose(fp);
 
 	return true;
 }
@@ -2012,7 +1867,6 @@ void CGLRenderModel::Draw()
 
 	glBindVertexArray(0);
 }
-
 
 //-----------------------------------------------------------------------------
 // Purpose:
