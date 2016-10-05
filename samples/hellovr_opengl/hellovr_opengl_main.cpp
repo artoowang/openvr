@@ -15,6 +15,7 @@
 #include "shared/Matrices.h"
 #include "shared/pathtools.h"
 
+#include <algorithm>
 #include <vector>
 
 using std::vector;
@@ -808,17 +809,20 @@ bool CMainApplication::CreateAllShaders()
 	m_unRenderModelProgramID = CompileGLShader( 
 		"render model",
 
-		// vertex shader
+		// Vertex Shader
 		"#version 410\n"
 		"uniform mat4 matrix;\n"
-		"layout(location = 0) in vec4 position;\n"
-		"layout(location = 1) in vec3 v3NormalIn;\n"
-		"layout(location = 2) in vec2 v2TexCoordsIn;\n"
-		"out vec2 v2TexCoord;\n"
+		"layout(location = 0) in float aMeshToWorldMatrixIndex;\n"
+		"layout(location = 1) in vec4 aPosition;\n"
+		"layout(location = 2) in vec2 aTexCoord;\n"
+		"layout(location = 3) in float aTexCoordRectIndex;\n"
+		"out vec2 v2UVcoords;\n"
 		"void main()\n"
 		"{\n"
-		"	v2TexCoord = v2TexCoordsIn;\n"
-		"	gl_Position = matrix * vec4(position.xyz, 1);\n"
+		"	v2UVcoords = aTexCoord;\n"
+		"   vec4 position = aPosition / 255.0 * 2.0 - 1.0;\n"
+		"   position.w = 1.0;\n"
+		"	gl_Position = matrix * position;\n"
 		"}\n",
 
 		//fragment shader
@@ -1811,6 +1815,18 @@ bool CGLRenderModel::BInit(const char* file_path)
 	return true;
 }
 
+// [-1, 1] -> [0, 255].
+uint8_t Uint8FromFloat(float v) {
+	v = std::min(1.0f, std::max(-1.0f, v));
+	return (uint8_t)std::min(255, std::max(0, (int32_t)((v + 1.0f) * 255.0f * 0.5f)));
+}
+
+// [0, 1] -> [0, 65535].
+uint16_t Uint16FromFloat(float v) {
+	v = std::min(1.0f, std::max(0.0f, v));
+	return (uint16_t)std::min(65535, std::max(0, (int32_t)(v * 65535.0f)));
+}
+
 void CGLRenderModel::BInitInternal(const vector<vr::RenderModel_Vertex_t>& vertices, const vector<uint32_t>& indices, size_t i)
 {
 	// create and bind a VAO to hold state for this model
@@ -1822,23 +1838,41 @@ void CGLRenderModel::BInitInternal(const vector<vr::RenderModel_Vertex_t>& verti
 	glBindBuffer(GL_ARRAY_BUFFER, m_glVertBuffer[i]);
 	const size_t vbo_size_in_bytes = 40740000U;
 	glBufferData(GL_ARRAY_BUFFER, vbo_size_in_bytes, nullptr, GL_DYNAMIC_DRAW);
-	// Duplicate |vertices| data to fully fill the VBO.
+	// Convert |vertices| data (in vr::RenderModel_Vertex_t) into TerrainAggVertex, and
+	// duplicate it to fully fill the VBO.
 	{
+		vector<TerrainAggVertex> agg_vertices(vertices.size());
+		for (size_t i = 0; i < vertices.size(); ++i) {
+			agg_vertices[i].aPosition[0] = Uint8FromFloat(vertices[i].vPosition.v[0]);
+			agg_vertices[i].aPosition[1] = Uint8FromFloat(vertices[i].vPosition.v[1]);
+			agg_vertices[i].aPosition[2] = Uint8FromFloat(vertices[i].vPosition.v[2]);
+			agg_vertices[i].aTexCoord[0] = Uint16FromFloat(vertices[i].rfTextureCoord[0]);
+			agg_vertices[i].aTexCoord[1] = Uint16FromFloat(vertices[i].rfTextureCoord[1]);
+			agg_vertices[i].aTexCoordRectIndex = 0;
+			agg_vertices[i].aMeshToWorldMatrixIndex = 0;
+		}
+
 		size_t offset = 0;
-		const size_t data_size_in_bytes = sizeof(vr::RenderModel_Vertex_t) * vertices.size();
+		const size_t data_size_in_bytes = sizeof(TerrainAggVertex) * agg_vertices.size();
 		while (offset + data_size_in_bytes <= vbo_size_in_bytes) {
-			glBufferSubData(GL_ARRAY_BUFFER, offset, data_size_in_bytes, vertices.data());
+			glBufferSubData(GL_ARRAY_BUFFER, offset, data_size_in_bytes, agg_vertices.data());
 			offset += data_size_in_bytes;
 		}
 	}
 
 	// Identify the components in the vertex buffer
-	glEnableVertexAttribArray(0);
-	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(vr::RenderModel_Vertex_t), (void *)offsetof(vr::RenderModel_Vertex_t, vPosition));
+	glVertexAttribPointer(1, 4, GL_UNSIGNED_BYTE, GL_FALSE, sizeof(TerrainAggVertex), (const void *)offsetof(TerrainAggVertex, aPosition));
+	glVertexAttribDivisor(1, 0);
 	glEnableVertexAttribArray(1);
-	glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(vr::RenderModel_Vertex_t), (void *)offsetof(vr::RenderModel_Vertex_t, vNormal));
+	glVertexAttribPointer(0, 1, GL_UNSIGNED_BYTE, GL_FALSE, sizeof(TerrainAggVertex), (const void *)offsetof(TerrainAggVertex, aMeshToWorldMatrixIndex));
+	glVertexAttribDivisor(0, 0);
+	glEnableVertexAttribArray(0);
+	glVertexAttribPointer(2, 2, GL_UNSIGNED_SHORT, GL_TRUE, sizeof(TerrainAggVertex), (const void *)offsetof(TerrainAggVertex, aTexCoord));
+	glVertexAttribDivisor(2, 0);
 	glEnableVertexAttribArray(2);
-	glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(vr::RenderModel_Vertex_t), (void *)offsetof(vr::RenderModel_Vertex_t, rfTextureCoord));
+	glVertexAttribPointer(3, 1, GL_UNSIGNED_SHORT, GL_FALSE, sizeof(TerrainAggVertex), (const void *)offsetof(TerrainAggVertex, aTexCoordRectIndex));
+	glVertexAttribDivisor(3, 0);
+	glEnableVertexAttribArray(3);
 
 	// Create and populate the index buffer
 	glGenBuffers(1, &m_glIndexBuffer[i]);
