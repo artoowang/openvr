@@ -1568,7 +1568,8 @@ CGLRenderModel *CMainApplication::FindOrLoadRenderModel( const char *pchRenderMo
 	if( !pRenderModel )
 	{
 		pRenderModel = new CGLRenderModel(pchRenderModelName);
-		const std::string file_path = std::string(pchRenderModelName) + ".model";
+		const std::string sExecutableDirectory = Path_StripFilename(Path_GetExecutablePath());
+		const std::string file_path = Path_MakeAbsolute(std::string("../") + pchRenderModelName + ".model", sExecutableDirectory);
 		pRenderModel->BInit(file_path.c_str());
 		m_vecRenderModels.push_back(pRenderModel);
 	}
