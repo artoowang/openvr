@@ -45,7 +45,9 @@ public:
 private:
 	static const size_t kNumVAOs = 1;
 
-	void BInitInternal(const vector<vr::RenderModel_Vertex_t>& vertices, const vector<uint32_t>& indices, size_t i);
+	void BInitInternal(const vector<vr::RenderModel_Vertex_t>& vertices,
+		               const vector<uint32_t>& indices,
+		               size_t i);
 
 	GLuint m_glVertBuffer[kNumVAOs];
 	GLuint m_glIndexBuffer[kNumVAOs];
@@ -637,17 +639,16 @@ bool CMainApplication::CreateAllShaders()
 	m_unRenderModelProgramID = CompileGLShader( 
 		"render model",
 
-		// Vertex Shader
+		// vertex shader
 		"#version 410\n"
 		"uniform mat4 matrix;\n"
-		"layout(location = 0) in vec4 aPosition;\n"
-		"layout(location = 1) in vec2 aTexCoord;\n"
-		"layout(location = 2) in float aThirdAttribute;\n"
+		"layout(location = 0) in vec4 position;\n"
+		"layout(location = 1) in vec2 v2TexCoordsIn;\n"
 		"out vec2 v2TexCoord;\n"
 		"void main()\n"
 		"{\n"
-		"   v2TexCoord = aTexCoord;\n"
-		"   gl_Position = matrix * vec4(aPosition.xyz, 1.0);\n"
+		"	v2TexCoord = v2TexCoordsIn;\n"
+		"	gl_Position = matrix * vec4(position.xyz, 1);\n"
 		"}\n",
 
 		//fragment shader
@@ -1037,7 +1038,9 @@ bool CGLRenderModel::BInit(const char* file_path)
 	return true;
 }
 
-void CGLRenderModel::BInitInternal(const vector<vr::RenderModel_Vertex_t>& vertices, const vector<uint32_t>& indices, size_t i)
+void CGLRenderModel::BInitInternal(const vector<vr::RenderModel_Vertex_t>& vertices,
+	                               const vector<uint32_t>& indices,
+	                               size_t i)
 {
 	// create and bind a VAO to hold state for this model
 	glGenVertexArrays(1, &m_glVertArray[i]);
@@ -1046,28 +1049,21 @@ void CGLRenderModel::BInitInternal(const vector<vr::RenderModel_Vertex_t>& verti
 	// Populate a vertex buffer
 	glGenBuffers(1, &m_glVertBuffer[i]);
 	glBindBuffer(GL_ARRAY_BUFFER, m_glVertBuffer[i]);
+
+	// Convert |vertices| data (in vr::RenderModel_Vertex_t) into TestVertex.
+	vector<TestVertex> agg_vertices(vertices.size());
+	for (size_t i = 0; i < vertices.size(); ++i) {
+		agg_vertices[i].aPosition[0] = vertices[i].vPosition.v[0];
+		agg_vertices[i].aPosition[1] = vertices[i].vPosition.v[1];
+		agg_vertices[i].aPosition[2] = vertices[i].vPosition.v[2];
+		agg_vertices[i].aTexCoord[0] = vertices[i].rfTextureCoord[0];
+		agg_vertices[i].aTexCoord[1] = vertices[i].rfTextureCoord[1];
+		agg_vertices[i].aThirdAttribute = 0;
+	}
+	// Test allocate a big VBO, but only use a small part of it.
 	const size_t vbo_size_in_bytes = 40740000U;
 	glBufferData(GL_ARRAY_BUFFER, vbo_size_in_bytes, nullptr, GL_DYNAMIC_DRAW);
-	// Convert |vertices| data (in vr::RenderModel_Vertex_t) into TestVertex, and
-	// duplicate it to fully fill the VBO.
-	{
-		vector<TestVertex> agg_vertices(vertices.size());
-		for (size_t i = 0; i < vertices.size(); ++i) {
-			agg_vertices[i].aPosition[0] = vertices[i].vPosition.v[0];
-			agg_vertices[i].aPosition[1] = vertices[i].vPosition.v[1];
-			agg_vertices[i].aPosition[2] = vertices[i].vPosition.v[2];
-			agg_vertices[i].aTexCoord[0] = vertices[i].rfTextureCoord[0];
-			agg_vertices[i].aTexCoord[1] = vertices[i].rfTextureCoord[1];
-			agg_vertices[i].aThirdAttribute = 0;
-		}
-
-		size_t offset = 0;
-		const size_t data_size_in_bytes = sizeof(TestVertex) * agg_vertices.size();
-		while (offset + data_size_in_bytes <= vbo_size_in_bytes) {
-			glBufferSubData(GL_ARRAY_BUFFER, offset, data_size_in_bytes, agg_vertices.data());
-			offset += data_size_in_bytes;
-		}
-	}
+	glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(TestVertex) * agg_vertices.size(), agg_vertices.data());
 
 	// Identify the components in the vertex buffer
 	glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, sizeof(TestVertex), (const void *)offsetof(TestVertex, aPosition));
@@ -1076,7 +1072,7 @@ void CGLRenderModel::BInitInternal(const vector<vr::RenderModel_Vertex_t>& verti
 	glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(TestVertex), (const void *)offsetof(TestVertex, aTexCoord));
 	glVertexAttribDivisor(1, 0);
 	glEnableVertexAttribArray(1);
-	// TODO: If we only specify one short, AMD driver seems to repack the buffer (slow). Instead, pretend it to be 2-element long.
+	// TODO: If we only specify one short, AMD driver seems to run slow. Instead, pretend it to be 2-element long.
 	glVertexAttribPointer(2,
 		                  g_bUseWorkAround ? 2 : 1,
 		                  GL_UNSIGNED_SHORT,
@@ -1089,22 +1085,16 @@ void CGLRenderModel::BInitInternal(const vector<vr::RenderModel_Vertex_t>& verti
 	// Create and populate the index buffer
 	glGenBuffers(1, &m_glIndexBuffer[i]);
 	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, m_glIndexBuffer[i]);
+	// Allocate a large index buffer with repeated indices so we can later call glDrawElements with large |count|.
 	const size_t index_buffer_size_in_bytes = 19012000U;
 	glBufferData(GL_ELEMENT_ARRAY_BUFFER, index_buffer_size_in_bytes, nullptr, GL_DYNAMIC_DRAW);
 	// Duplicate |indices| data to fully fill the VBO.
 	{
 		size_t offset = 0;
 		const size_t data_size_in_bytes = sizeof(uint32_t) * indices.size();
-		size_t vertex_offset = 0;
 		while (offset + data_size_in_bytes <= index_buffer_size_in_bytes) {
-			vector<uint32_t> offseted_indices = indices;
-			for (auto& index : offseted_indices) {
-				index += (uint32_t)vertex_offset;
-			}
-			glBufferSubData(GL_ELEMENT_ARRAY_BUFFER, offset, data_size_in_bytes, offseted_indices.data());
+			glBufferSubData(GL_ELEMENT_ARRAY_BUFFER, offset, data_size_in_bytes, indices.data());
 			offset += data_size_in_bytes;
-			// 3 times number of vertices, so indices will reference into vertices that are deep into the VBO.
-			vertex_offset += 3 * vertices.size();
 		}
 	}
 
@@ -1142,6 +1132,8 @@ void CGLRenderModel::Draw()
 		{
 			ScopedTimer timer("glDrawElements");
 			glDrawElements(GL_TRIANGLES, 262971, GL_UNSIGNED_INT, nullptr);
+			//glDrawElements(GL_TRIANGLES, 51978, GL_UNSIGNED_INT, nullptr);
+			//glDrawElements(GL_TRIANGLES, 9900*5, GL_UNSIGNED_INT, nullptr);
 		}
 	}
 	glBindVertexArray(0);
