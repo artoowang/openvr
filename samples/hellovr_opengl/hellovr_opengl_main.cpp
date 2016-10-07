@@ -24,15 +24,6 @@ using std::vector;
 #include "unistd.h"
 #endif
 
-void ThreadSleep( unsigned long nMilliseconds )
-{
-#if defined(_WIN32)
-	::Sleep( nMilliseconds );
-#elif defined(POSIX)
-	usleep( nMilliseconds * 1000 );
-#endif
-}
-
 struct TestVertex {
 	float aPosition[4];
 	float aTexCoord[2];
@@ -46,7 +37,6 @@ public:
 	CGLRenderModel( const std::string & sRenderModelName );
 	~CGLRenderModel();
 
-	bool BInit( const vr::RenderModel_t & vrModel, const vr::RenderModel_TextureMap_t & vrDiffuseTexture );
 	bool BInit(const char* file_path);
 	void Cleanup();
 	void Draw();
@@ -63,7 +53,6 @@ private:
 	GLuint m_glTexture;
 	GLsizei m_unVertexCount;
 	std::string m_sModelName;
-	size_t current_index_;
 };
 
 static bool g_bPrintf = true;
@@ -99,8 +88,6 @@ public:
 	Matrix4 GetHMDMatrixPoseEye( vr::Hmd_Eye nEye );
 	Matrix4 GetCurrentViewProjectionMatrix( vr::Hmd_Eye nEye );
 	void UpdateHMDMatrixPose();
-
-	Matrix4 ConvertSteamVRMatrixToMatrix4( const vr::HmdMatrix34_t &matPose );
 
 	GLuint CompileGLShader( const char *pchShaderName, const char *pchVertexShader, const char *pchFragmentShader );
 	bool CreateAllShaders();
@@ -149,20 +136,6 @@ private: // OpenGL bookkeeping
 	Matrix4 m_mat4ProjectionLeft;
 	Matrix4 m_mat4ProjectionRight;
 
-	struct VertexDataScene
-	{
-		Vector3 position;
-		Vector2 texCoord;
-	};
-
-	struct VertexDataLens
-	{
-		Vector2 position;
-		Vector2 texCoordRed;
-		Vector2 texCoordGreen;
-		Vector2 texCoordBlue;
-	};
-
 	GLuint m_unControllerTransformProgramID;
 	GLuint m_unRenderModelProgramID;
 
@@ -181,9 +154,6 @@ private: // OpenGL bookkeeping
 	FramebufferDesc rightEyeDesc;
 
 	bool CreateFrameBuffer( int nWidth, int nHeight, FramebufferDesc &framebufferDesc );
-	
-	uint32_t m_nRenderWidth;
-	uint32_t m_nRenderHeight;
 
 	CGLRenderModel *m_rTrackedDeviceToRenderModel[ vr::k_unMaxTrackedDeviceCount ];
 };
@@ -761,12 +731,8 @@ bool CMainApplication::CreateFrameBuffer( int nWidth, int nHeight, FramebufferDe
 //-----------------------------------------------------------------------------
 bool CMainApplication::SetupStereoRenderTargets()
 {
-	m_nRenderWidth = 1512;
-	m_nRenderHeight = 1680;
-
-	CreateFrameBuffer( m_nRenderWidth, m_nRenderHeight, leftEyeDesc );
-	CreateFrameBuffer( m_nRenderWidth, m_nRenderHeight, rightEyeDesc );
-	
+	CreateFrameBuffer(m_nWindowWidth, m_nWindowHeight, leftEyeDesc);
+	CreateFrameBuffer(m_nWindowWidth, m_nWindowHeight, rightEyeDesc);
 	return true;
 }
 
@@ -916,19 +882,14 @@ Matrix4 CMainApplication::GetCurrentViewProjectionMatrix( vr::Hmd_Eye nEye )
 //-----------------------------------------------------------------------------
 void CMainApplication::UpdateHMDMatrixPose()
 {
-	m_iValidPoseCount = 5;
-	m_strPoseClasses = "HTTCC";
+	m_iValidPoseCount = 3;
+	m_strPoseClasses = "HCC";
 	m_rmat4DevicePose[0] = Matrix4(0.660372f, 0.005540f, -0.750918f, 0.000000f, 0.124383f, 0.985353f, 0.116655f, 0.000000f, 0.740566f, -0.170437f, 0.650010f, 0.000000f, -0.762210f, 0.816847f, 0.476603f, 1.000000f);
 	m_rDevClassChar[0] = 'H';
-	m_rmat4DevicePose[1] = Matrix4(-0.719325f, 0.043348f, -0.693320f, 0.000000f, -0.112347f, 0.977653f, 0.177686f, 0.000000f, 0.685529f, 0.205706f, -0.698380f, 0.000000f, 2.403435f, 2.413503f, -1.104088f, 1.000000f);
-	m_rDevClassChar[1] = 'T';
-	m_rmat4DevicePose[2] = Matrix4(0.996386f, 0.032452f, -0.078497f, 0.000000f, -0.024020f, -0.778762f, -0.626859f, 0.000000f, -0.081473f, 0.626479f, -0.775168f, 0.000000f, -0.018010f, 3.142777f, -0.990557f, 1.000000f);
-	m_rDevClassChar[2] = 'T';
-	m_rmat4DevicePose[3] = Matrix4(0.544623f, -0.146795f, 0.825734f, 0.000000f, -0.116081f, 0.961893f, 0.247564f, 0.000000f, -0.830609f, -0.230681f, 0.506829f, 0.000000f, -0.935668f, 0.832183f, 0.417553f, 1.000000f);
-	m_rDevClassChar[3] = 'C';
-	m_rmat4DevicePose[4] = Matrix4(0.869483f, 0.196030f, 0.453399f, 0.000000f, -0.309990f, 0.931179f, 0.191867f, 0.000000f, -0.384584f, -0.307374f, 0.870412f, 0.000000f, -1.001555f, 0.838425f, 0.263718f, 1.000000f);
-	m_rDevClassChar[4] = 'C';
-
+	m_rmat4DevicePose[1] = Matrix4(0.544623f, -0.146795f, 0.825734f, 0.000000f, -0.116081f, 0.961893f, 0.247564f, 0.000000f, -0.830609f, -0.230681f, 0.506829f, 0.000000f, -0.935668f, 0.832183f, 0.417553f, 1.000000f);
+	m_rDevClassChar[1] = 'C';
+	m_rmat4DevicePose[2] = Matrix4(0.869483f, 0.196030f, 0.453399f, 0.000000f, -0.309990f, 0.931179f, 0.191867f, 0.000000f, -0.384584f, -0.307374f, 0.870412f, 0.000000f, -1.001555f, 0.838425f, 0.263718f, 1.000000f);
+	m_rDevClassChar[2] = 'C';
 	m_mat4HMDPose = m_rmat4DevicePose[0].invert();
 }
 
@@ -956,9 +917,6 @@ void CMainApplication::SetupRenderModelForTrackedDevice( vr::TrackedDeviceIndex_
 
 	std::string sRenderModelName;
 	if (unTrackedDeviceIndex <= 2) {
-		sRenderModelName = "lh_basestation_vive";
-	}
-	else if (unTrackedDeviceIndex <= 4) {
 		sRenderModelName = "vr_controller_vive_1_5";
 	}
 	else {
@@ -999,26 +957,10 @@ void CMainApplication::SetupRenderModels()
 
 
 //-----------------------------------------------------------------------------
-// Purpose: Converts a SteamVR matrix to our local matrix class
-//-----------------------------------------------------------------------------
-Matrix4 CMainApplication::ConvertSteamVRMatrixToMatrix4( const vr::HmdMatrix34_t &matPose )
-{
-	Matrix4 matrixObj(
-		matPose.m[0][0], matPose.m[1][0], matPose.m[2][0], 0.0,
-		matPose.m[0][1], matPose.m[1][1], matPose.m[2][1], 0.0,
-		matPose.m[0][2], matPose.m[1][2], matPose.m[2][2], 0.0,
-		matPose.m[0][3], matPose.m[1][3], matPose.m[2][3], 1.0f
-		);
-	return matrixObj;
-}
-
-
-//-----------------------------------------------------------------------------
 // Purpose: Create/destroy GL Render Models
 //-----------------------------------------------------------------------------
 CGLRenderModel::CGLRenderModel( const std::string & sRenderModelName )
-	: m_sModelName( sRenderModelName ),
-	  current_index_(0)
+	: m_sModelName( sRenderModelName )
 {
 	for (size_t i = 0; i < kNumVAOs; ++i) {
 		m_glIndexBuffer[i] = 0;
@@ -1035,74 +977,6 @@ CGLRenderModel::~CGLRenderModel()
 }
 
 
-//-----------------------------------------------------------------------------
-// Purpose: Allocates and populates the GL resources for a render model
-//-----------------------------------------------------------------------------
-bool CGLRenderModel::BInit( const vr::RenderModel_t & vrModel, const vr::RenderModel_TextureMap_t & vrDiffuseTexture )
-{
-	// TODO: Used to serialize vr::RenderModel_t and RenderModel_TextureMap_t.
-	FILE* fp = nullptr;
-	fopen_s(&fp, m_sModelName.c_str(), "wb");
-	fwrite(&vrModel.unVertexCount, sizeof(uint32_t), 1, fp);
-	fwrite(vrModel.rVertexData, sizeof(vr::RenderModel_Vertex_t), vrModel.unVertexCount, fp);
-	fwrite(&vrModel.unTriangleCount, sizeof(uint32_t), 1, fp);
-	fwrite(vrModel.rIndexData, sizeof(uint16_t), vrModel.unTriangleCount*3, fp);
-	fwrite(&vrDiffuseTexture.unWidth, sizeof(uint16_t), 1, fp);
-	fwrite(&vrDiffuseTexture.unHeight, sizeof(uint16_t), 1, fp);
-	fwrite(vrDiffuseTexture.rubTextureMapData, 1, vrDiffuseTexture.unWidth * vrDiffuseTexture.unHeight * 4, fp);
-	fclose(fp);
-
-	// Make a 10x larger vertex buffer to allow big index values.
-	const size_t num_vertices = vrModel.unVertexCount;
-	vector<vr::RenderModel_Vertex_t> vertices(num_vertices * 10);
-	for (size_t i = 0; i < num_vertices; ++i) {
-		for (size_t j = 0; j < 10; ++j) {
-			vertices[i + j * num_vertices] = vrModel.rVertexData[i];
-		}
-	}
-
-	// Convert RenderModel_t indices to 32-bit integers. Duplicate the indices 4x so we can specify large offset.
-	const size_t num_indices = vrModel.unTriangleCount * 3;
-	vector<uint32_t> indices(num_indices * 4);
-	for (size_t i = 0; i < num_indices; ++i) {
-		// Make index reference to the last part of the vertices.
-		const uint32_t index = (uint32_t)(vrModel.rIndexData[i] + num_vertices * 9);
-		indices[i] = index;
-		indices[i + num_indices] = index;
-		indices[i + num_indices * 2] = index;
-		indices[i + num_indices * 3] = index;
-	}
-
-	for (size_t i = 0; i < kNumVAOs; ++i) {
-		BInitInternal(vertices, indices, i);
-	}
-
-	// create and populate the texture
-	glGenTextures(1, &m_glTexture );
-	glBindTexture( GL_TEXTURE_2D, m_glTexture );
-
-	glTexImage2D( GL_TEXTURE_2D, 0, GL_RGBA, vrDiffuseTexture.unWidth, vrDiffuseTexture.unHeight,
-		0, GL_RGBA, GL_UNSIGNED_BYTE, vrDiffuseTexture.rubTextureMapData );
-
-	// If this renders black ask McJohn what's wrong.
-	glGenerateMipmap(GL_TEXTURE_2D);
-
-	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE );
-	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE );
-	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR );
-	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR );
-
-	GLfloat fLargest;
-	glGetFloatv( GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT, &fLargest );
-	glTexParameterf( GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY_EXT, fLargest );
-
-	glBindTexture( GL_TEXTURE_2D, 0 );
-
-	m_unVertexCount = vrModel.unTriangleCount * 3;
-
-	return true;
-}
-
 bool CGLRenderModel::BInit(const char* file_path)
 {
 	FILE* fp = nullptr;
@@ -1112,11 +986,6 @@ bool CGLRenderModel::BInit(const char* file_path)
 	fread(&num_vertices, sizeof(uint32_t), 1, fp);
 	vector<vr::RenderModel_Vertex_t> vertices(num_vertices);
 	fread(vertices.data(), sizeof(vr::RenderModel_Vertex_t), num_vertices, fp);
-	/*for (size_t i = 0; i < num_vertices; ++i) {
-		for (size_t j = 1; j < 10; ++j) {
-			vertices[i + j * num_vertices] = vertices[i];
-		}
-	}*/
 
 	uint32_t num_triangles = 0;
 	fread(&num_triangles, sizeof(uint32_t), 1, fp);
@@ -1126,12 +995,7 @@ bool CGLRenderModel::BInit(const char* file_path)
 	// Convert indices to 32-bit integers.
 	vector<uint32_t> indices(num_indices);
 	for (size_t i = 0; i < num_indices; ++i) {
-		// Make index reference to the last part of the vertices.
-		//const uint32_t index = (uint32_t)indices16[i] + num_vertices * 9;
 		indices[i] = (uint32_t)indices16[i];
-		/*indices[i + num_indices] = index;
-		indices[i + num_indices * 2] = index;
-		indices[i + num_indices * 3] = index;*/
 	}
 
 	for (size_t i = 0; i < kNumVAOs; ++i) {
@@ -1173,18 +1037,6 @@ bool CGLRenderModel::BInit(const char* file_path)
 	return true;
 }
 
-// [-1, 1] -> [0, 255].
-uint8_t Uint8FromFloat(float v) {
-	v = std::min(1.0f, std::max(-1.0f, v));
-	return (uint8_t)std::min(255, std::max(0, (int32_t)((v + 1.0f) * 255.0f * 0.5f)));
-}
-
-// [0, 1] -> [0, 65535].
-uint16_t Uint16FromFloat(float v) {
-	v = std::min(1.0f, std::max(0.0f, v));
-	return (uint16_t)std::min(65535, std::max(0, (int32_t)(v * 65535.0f)));
-}
-
 void CGLRenderModel::BInitInternal(const vector<vr::RenderModel_Vertex_t>& vertices, const vector<uint32_t>& indices, size_t i)
 {
 	// create and bind a VAO to hold state for this model
@@ -1196,27 +1048,21 @@ void CGLRenderModel::BInitInternal(const vector<vr::RenderModel_Vertex_t>& verti
 	glBindBuffer(GL_ARRAY_BUFFER, m_glVertBuffer[i]);
 	const size_t vbo_size_in_bytes = 40740000U;
 	glBufferData(GL_ARRAY_BUFFER, vbo_size_in_bytes, nullptr, GL_DYNAMIC_DRAW);
-	// Convert |vertices| data (in vr::RenderModel_Vertex_t) into TerrainAggVertex, and
+	// Convert |vertices| data (in vr::RenderModel_Vertex_t) into TestVertex, and
 	// duplicate it to fully fill the VBO.
-	using Vertex = TestVertex;
 	{
-		vector<Vertex> agg_vertices(vertices.size());
+		vector<TestVertex> agg_vertices(vertices.size());
 		for (size_t i = 0; i < vertices.size(); ++i) {
-			//agg_vertices[i].aPosition[0] = Uint8FromFloat(vertices[i].vPosition.v[0]);
-			//agg_vertices[i].aPosition[1] = Uint8FromFloat(vertices[i].vPosition.v[1]);
-			//agg_vertices[i].aPosition[2] = Uint8FromFloat(vertices[i].vPosition.v[2]);
 			agg_vertices[i].aPosition[0] = vertices[i].vPosition.v[0];
 			agg_vertices[i].aPosition[1] = vertices[i].vPosition.v[1];
 			agg_vertices[i].aPosition[2] = vertices[i].vPosition.v[2];
-			//agg_vertices[i].aTexCoord[0] = Uint16FromFloat(vertices[i].rfTextureCoord[0]);
-			//agg_vertices[i].aTexCoord[1] = Uint16FromFloat(vertices[i].rfTextureCoord[1]);
 			agg_vertices[i].aTexCoord[0] = vertices[i].rfTextureCoord[0];
 			agg_vertices[i].aTexCoord[1] = vertices[i].rfTextureCoord[1];
 			agg_vertices[i].aThirdAttribute = 0;
 		}
 
 		size_t offset = 0;
-		const size_t data_size_in_bytes = sizeof(Vertex) * agg_vertices.size();
+		const size_t data_size_in_bytes = sizeof(TestVertex) * agg_vertices.size();
 		while (offset + data_size_in_bytes <= vbo_size_in_bytes) {
 			glBufferSubData(GL_ARRAY_BUFFER, offset, data_size_in_bytes, agg_vertices.data());
 			offset += data_size_in_bytes;
@@ -1224,14 +1070,19 @@ void CGLRenderModel::BInitInternal(const vector<vr::RenderModel_Vertex_t>& verti
 	}
 
 	// Identify the components in the vertex buffer
-	glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, sizeof(Vertex), (const void *)offsetof(Vertex, aPosition));
+	glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, sizeof(TestVertex), (const void *)offsetof(TestVertex, aPosition));
 	glVertexAttribDivisor(0, 0);
 	glEnableVertexAttribArray(0);
-	glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (const void *)offsetof(Vertex, aTexCoord));
+	glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(TestVertex), (const void *)offsetof(TestVertex, aTexCoord));
 	glVertexAttribDivisor(1, 0);
 	glEnableVertexAttribArray(1);
 	// TODO: If we only specify one short, AMD driver seems to repack the buffer (slow). Instead, pretend it to be 2-element long.
-	glVertexAttribPointer(2, g_bUseWorkAround ? 2 : 1, GL_UNSIGNED_SHORT, GL_FALSE, sizeof(Vertex), (const void *)offsetof(Vertex, aThirdAttribute));
+	glVertexAttribPointer(2,
+		                  g_bUseWorkAround ? 2 : 1,
+		                  GL_UNSIGNED_SHORT,
+		                  GL_FALSE,
+		                  sizeof(TestVertex),
+		                  (const void *)offsetof(TestVertex, aThirdAttribute));
 	glVertexAttribDivisor(2, 0);
 	glEnableVertexAttribArray(2);
 
