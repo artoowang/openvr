@@ -483,7 +483,7 @@ class ScopedTimer {
   ~ScopedTimer() {
     const double now = GetTimestampInSeconds();
     const double duration_in_us = (now - start_time_) * 1000000.0;
-	dprintf("%s: %.2f us\n", name_, duration_in_us);
+	dprintf("%s: %.2f us\n", name_.c_str(), duration_in_us);
   }
 
  private:
