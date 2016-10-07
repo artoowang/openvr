@@ -44,6 +44,17 @@ struct TerrainAggVertex {
 	uint8_t pad2[3];
 };
 
+struct TestVertex {
+	uint8_t aPosition[4];  // Passthrough from MeshVertex0.
+	int8_t aNormal[3];  // Passthrough from MeshVertex0.
+	int8_t pad0;
+	uint16_t aTexCoord[2];  // Scaled, translated texcoord into uMeshTextureAtlas.
+	uint16_t aTexCoordRectIndex;  // Index into uTexCoordRectArray.
+	uint16_t pad1;
+	uint8_t aMeshToWorldMatrixIndex;  // Index into uMeshToWorldMatrixArray.
+	uint8_t pad2[3];
+};
+
 class CGLRenderModel
 {
 public:
@@ -1840,20 +1851,23 @@ void CGLRenderModel::BInitInternal(const vector<vr::RenderModel_Vertex_t>& verti
 	glBufferData(GL_ARRAY_BUFFER, vbo_size_in_bytes, nullptr, GL_DYNAMIC_DRAW);
 	// Convert |vertices| data (in vr::RenderModel_Vertex_t) into TerrainAggVertex, and
 	// duplicate it to fully fill the VBO.
+	using Vertex = TestVertex;
 	{
-		vector<TerrainAggVertex> agg_vertices(vertices.size());
+		vector<Vertex> agg_vertices(vertices.size());
 		for (size_t i = 0; i < vertices.size(); ++i) {
 			agg_vertices[i].aPosition[0] = Uint8FromFloat(vertices[i].vPosition.v[0]);
 			agg_vertices[i].aPosition[1] = Uint8FromFloat(vertices[i].vPosition.v[1]);
 			agg_vertices[i].aPosition[2] = Uint8FromFloat(vertices[i].vPosition.v[2]);
 			agg_vertices[i].aTexCoord[0] = Uint16FromFloat(vertices[i].rfTextureCoord[0]);
 			agg_vertices[i].aTexCoord[1] = Uint16FromFloat(vertices[i].rfTextureCoord[1]);
+			//agg_vertices[i].aTexCoord[0] = vertices[i].rfTextureCoord[0];
+			//agg_vertices[i].aTexCoord[1] = vertices[i].rfTextureCoord[1];
 			agg_vertices[i].aTexCoordRectIndex = 0;
 			agg_vertices[i].aMeshToWorldMatrixIndex = 0;
 		}
 
 		size_t offset = 0;
-		const size_t data_size_in_bytes = sizeof(TerrainAggVertex) * agg_vertices.size();
+		const size_t data_size_in_bytes = sizeof(Vertex) * agg_vertices.size();
 		while (offset + data_size_in_bytes <= vbo_size_in_bytes) {
 			glBufferSubData(GL_ARRAY_BUFFER, offset, data_size_in_bytes, agg_vertices.data());
 			offset += data_size_in_bytes;
@@ -1861,16 +1875,17 @@ void CGLRenderModel::BInitInternal(const vector<vr::RenderModel_Vertex_t>& verti
 	}
 
 	// Identify the components in the vertex buffer
-	glVertexAttribPointer(1, 4, GL_UNSIGNED_BYTE, GL_FALSE, sizeof(TerrainAggVertex), (const void *)offsetof(TerrainAggVertex, aPosition));
+	glVertexAttribPointer(1, 4, GL_UNSIGNED_BYTE, GL_FALSE, sizeof(Vertex), (const void *)offsetof(Vertex, aPosition));
 	glVertexAttribDivisor(1, 0);
 	glEnableVertexAttribArray(1);
-	glVertexAttribPointer(0, 1, GL_UNSIGNED_BYTE, GL_FALSE, sizeof(TerrainAggVertex), (const void *)offsetof(TerrainAggVertex, aMeshToWorldMatrixIndex));
+	glVertexAttribPointer(0, 1, GL_UNSIGNED_BYTE, GL_FALSE, sizeof(Vertex), (const void *)offsetof(Vertex, aMeshToWorldMatrixIndex));
 	glVertexAttribDivisor(0, 0);
 	glEnableVertexAttribArray(0);
-	glVertexAttribPointer(2, 2, GL_UNSIGNED_SHORT, GL_TRUE, sizeof(TerrainAggVertex), (const void *)offsetof(TerrainAggVertex, aTexCoord));
+	glVertexAttribPointer(2, 2, GL_UNSIGNED_SHORT, GL_TRUE, sizeof(Vertex), (const void *)offsetof(Vertex, aTexCoord));
 	glVertexAttribDivisor(2, 0);
 	glEnableVertexAttribArray(2);
-	glVertexAttribPointer(3, 1, GL_UNSIGNED_SHORT, GL_FALSE, sizeof(TerrainAggVertex), (const void *)offsetof(TerrainAggVertex, aTexCoordRectIndex));
+	// TODO: If we only specify one short, AMD driver seems to repack the buffer (slow). Instead, pretend it to be 2-element long.
+	glVertexAttribPointer(3, 2, GL_UNSIGNED_SHORT, GL_FALSE, sizeof(Vertex), (const void *)offsetof(Vertex, aTexCoordRectIndex));
 	glVertexAttribDivisor(3, 0);
 	glEnableVertexAttribArray(3);
 
