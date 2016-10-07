@@ -150,7 +150,7 @@
       <AdditionalIncludeDirectories>..;../../headers;../thirdparty/glew/glew-1.11.0/include;../thirdparty/sdl2-2.0.3/include</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
-      <SubSystem>Windows</SubSystem>
+      <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>

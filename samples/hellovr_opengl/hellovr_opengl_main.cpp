@@ -33,26 +33,11 @@ void ThreadSleep( unsigned long nMilliseconds )
 #endif
 }
 
-struct TerrainAggVertex {
-	uint8_t aPosition[4];  // Passthrough from MeshVertex0.
-	int8_t aNormal[3];  // Passthrough from MeshVertex0.
-	int8_t pad0;
-	uint16_t aTexCoord[2];  // Scaled, translated texcoord into uMeshTextureAtlas.
-	uint16_t aTexCoordRectIndex;  // Index into uTexCoordRectArray.
-	uint16_t pad1;
-	uint8_t aMeshToWorldMatrixIndex;  // Index into uMeshToWorldMatrixArray.
-	uint8_t pad2[3];
-};
-
 struct TestVertex {
-	uint8_t aPosition[4];  // Passthrough from MeshVertex0.
-	int8_t aNormal[3];  // Passthrough from MeshVertex0.
-	int8_t pad0;
-	uint16_t aTexCoord[2];  // Scaled, translated texcoord into uMeshTextureAtlas.
-	uint16_t aTexCoordRectIndex;  // Index into uTexCoordRectArray.
+	float aPosition[4];
+	float aTexCoord[2];
+	uint16_t aThirdAttribute;
 	uint16_t pad1;
-	uint8_t aMeshToWorldMatrixIndex;  // Index into uMeshToWorldMatrixArray.
-	uint8_t pad2[3];
 };
 
 class CGLRenderModel
@@ -68,8 +53,7 @@ public:
 	const std::string & GetName() const { return m_sModelName; }
 
 private:
-	static const size_t kNumVAOs = 3;
-	static const size_t kNumIndicesToDraw = 51978;
+	static const size_t kNumVAOs = 1;
 
 	void BInitInternal(const vector<vr::RenderModel_Vertex_t>& vertices, const vector<uint32_t>& indices, size_t i);
 
@@ -83,6 +67,7 @@ private:
 };
 
 static bool g_bPrintf = true;
+static bool g_bUseWorkAround = false;
 
 //-----------------------------------------------------------------------------
 // Purpose:
@@ -104,20 +89,10 @@ public:
 	bool HandleInput();
 	void RenderFrame();
 
-	bool SetupTexturemaps();
-
-	void SetupScene();
-	void AddCubeToScene( Matrix4 mat, std::vector<float> &vertdata );
-	void AddCubeVertex( float fl0, float fl1, float fl2, float fl3, float fl4, std::vector<float> &vertdata );
-
-	void DrawControllers();
-
 	bool SetupStereoRenderTargets();
-	void SetupDistortion();
 	void SetupCameras();
 
 	void RenderStereoTargets();
-	void RenderDistortion();
 	void RenderScene( vr::Hmd_Eye nEye );
 
 	Matrix4 GetHMDMatrixProjectionEye( vr::Hmd_Eye nEye );
@@ -155,32 +130,12 @@ private: // OpenGL bookkeeping
 	int m_iTrackedControllerCount_Last;
 	int m_iValidPoseCount;
 	int m_iValidPoseCount_Last;
-	bool m_bShowCubes;
 
 	std::string m_strPoseClasses;                            // what classes we saw poses for this frame
 	char m_rDevClassChar[ vr::k_unMaxTrackedDeviceCount ];   // for each device, a character representing its class
-
-	int m_iSceneVolumeWidth;
-	int m_iSceneVolumeHeight;
-	int m_iSceneVolumeDepth;
-	float m_fScaleSpacing;
-	float m_fScale;
-	
-	int m_iSceneVolumeInit;                                  // if you want something other than the default 20x20x20
 	
 	float m_fNearClip;
 	float m_fFarClip;
-
-	GLuint m_iTexture;
-
-	unsigned int m_uiVertcount;
-
-	GLuint m_glSceneVertBuffer;
-	GLuint m_unSceneVAO;
-	GLuint m_unLensVAO;
-	GLuint m_glIDVertBuffer;
-	GLuint m_glIDIndexBuffer;
-	unsigned int m_uiIndexSize;
 
 	GLuint m_glControllerVertBuffer;
 	GLuint m_unControllerVAO;
@@ -208,12 +163,9 @@ private: // OpenGL bookkeeping
 		Vector2 texCoordBlue;
 	};
 
-	GLuint m_unSceneProgramID;
-	GLuint m_unLensProgramID;
 	GLuint m_unControllerTransformProgramID;
 	GLuint m_unRenderModelProgramID;
 
-	GLint m_nSceneMatrixLocation;
 	GLint m_nControllerMatrixLocation;
 	GLint m_nRenderModelMatrixLocation;
 
@@ -233,13 +185,7 @@ private: // OpenGL bookkeeping
 	uint32_t m_nRenderWidth;
 	uint32_t m_nRenderHeight;
 
-	std::vector< CGLRenderModel * > m_vecRenderModels;
 	CGLRenderModel *m_rTrackedDeviceToRenderModel[ vr::k_unMaxTrackedDeviceCount ];
-
-  std::string render_time_buffer_;
-  std::string frame_time_buffer_;
-  std::string submit0_buffer_;
-  std::string submit1_buffer_;
 };
 
 //-----------------------------------------------------------------------------
@@ -268,8 +214,6 @@ CMainApplication::CMainApplication( int argc, char *argv[] )
 	, m_pContext(NULL)
 	, m_nWindowWidth( 1280 )
 	, m_nWindowHeight( 720 )
-	, m_unSceneProgramID( 0 )
-	, m_unLensProgramID( 0 )
 	, m_unControllerTransformProgramID( 0 )
 	, m_unRenderModelProgramID( 0 )
 	, m_bDebugOpenGL( false )
@@ -279,18 +223,13 @@ CMainApplication::CMainApplication( int argc, char *argv[] )
 	, m_bGlFinishHack( true )
 	, m_glControllerVertBuffer( 0 )
 	, m_unControllerVAO( 0 )
-	, m_unLensVAO( 0 )
-	, m_unSceneVAO( 0 )
-	, m_nSceneMatrixLocation( -1 )
 	, m_nControllerMatrixLocation( -1 )
 	, m_nRenderModelMatrixLocation( -1 )
 	, m_iTrackedControllerCount( 0 )
 	, m_iTrackedControllerCount_Last( -1 )
 	, m_iValidPoseCount( 0 )
 	, m_iValidPoseCount_Last( -1 )
-	, m_iSceneVolumeInit( 20 )
 	, m_strPoseClasses("")
-	, m_bShowCubes( true )
 {
 
 	for( int i = 1; i < argc; i++ )
@@ -315,14 +254,10 @@ CMainApplication::CMainApplication( int argc, char *argv[] )
 		{
 			g_bPrintf = false;
 		}
-		else if ( !stricmp( argv[i], "-cubevolume" ) && ( argc > i + 1 ) && ( *argv[ i + 1 ] != '-' ) )
-		{
-			m_iSceneVolumeInit = atoi( argv[ i + 1 ] );
-			i++;
-		}
 	}
 	// other initialization tasks are done in BInit
 	memset(m_rDevClassChar, 0, sizeof(m_rDevClassChar));
+	memset(m_rTrackedDeviceToRenderModel, 0, sizeof(m_rTrackedDeviceToRenderModel));
 };
 
 
@@ -395,19 +330,8 @@ bool CMainApplication::BInit()
 
 	SDL_SetWindowTitle( m_pWindow, "hellovr_sdl" );
 	
-	// cube array
- 	m_iSceneVolumeWidth = m_iSceneVolumeInit;
- 	m_iSceneVolumeHeight = m_iSceneVolumeInit;
- 	m_iSceneVolumeDepth = m_iSceneVolumeInit;
- 		
- 	m_fScale = 0.3f;
- 	m_fScaleSpacing = 4.0f;
- 
  	m_fNearClip = 0.1f;
  	m_fFarClip = 30.0f;
- 
- 	m_iTexture = 0;
- 	m_uiVertcount = 0;
  
 // 		m_MillisecondsTimer.start(1, this);
 // 		m_SecondsTimer.start(1000, this);
@@ -446,11 +370,8 @@ bool CMainApplication::BInitGL()
 	if( !CreateAllShaders() )
 		return false;
 
-	SetupTexturemaps();
-	SetupScene();
 	SetupCameras();
 	SetupStereoRenderTargets();
-	SetupDistortion();
 
 	SetupRenderModels();
 
@@ -463,24 +384,18 @@ bool CMainApplication::BInitGL()
 //-----------------------------------------------------------------------------
 void CMainApplication::Shutdown()
 {
-	for( std::vector< CGLRenderModel * >::iterator i = m_vecRenderModels.begin(); i != m_vecRenderModels.end(); i++ )
-	{
-		delete (*i);
+	for (uint32_t unTrackedDevice = 0; unTrackedDevice < vr::k_unMaxTrackedDeviceCount; unTrackedDevice++) {
+		if (m_rTrackedDeviceToRenderModel[unTrackedDevice]) {
+			delete m_rTrackedDeviceToRenderModel[unTrackedDevice];
+		}
+		m_rTrackedDeviceToRenderModel[unTrackedDevice] = nullptr;
 	}
-	m_vecRenderModels.clear();
 	
 	if( m_pContext )
 	{
 		glDebugMessageControl( GL_DONT_CARE, GL_DONT_CARE, GL_DONT_CARE, 0, nullptr, GL_FALSE );
 		glDebugMessageCallback(nullptr, nullptr);
-		glDeleteBuffers(1, &m_glSceneVertBuffer);
-		glDeleteBuffers(1, &m_glIDVertBuffer);
-		glDeleteBuffers(1, &m_glIDIndexBuffer);
 
-		if ( m_unSceneProgramID )
-		{
-			glDeleteProgram( m_unSceneProgramID );
-		}
 		if ( m_unControllerTransformProgramID )
 		{
 			glDeleteProgram( m_unControllerTransformProgramID );
@@ -488,10 +403,6 @@ void CMainApplication::Shutdown()
 		if ( m_unRenderModelProgramID )
 		{
 			glDeleteProgram( m_unRenderModelProgramID );
-		}
-		if ( m_unLensProgramID )
-		{
-			glDeleteProgram( m_unLensProgramID );
 		}
 
 		glDeleteRenderbuffers( 1, &leftEyeDesc.m_nDepthBufferId );
@@ -506,14 +417,6 @@ void CMainApplication::Shutdown()
 		glDeleteTextures( 1, &rightEyeDesc.m_nResolveTextureId );
 		glDeleteFramebuffers( 1, &rightEyeDesc.m_nResolveFramebufferId );
 
-		if( m_unLensVAO != 0 )
-		{
-			glDeleteVertexArrays( 1, &m_unLensVAO );
-		}
-		if( m_unSceneVAO != 0 )
-		{
-			glDeleteVertexArrays( 1, &m_unSceneVAO );
-		}
 		if( m_unControllerVAO != 0 )
 		{
 			glDeleteVertexArrays( 1, &m_unControllerVAO );
@@ -525,22 +428,6 @@ void CMainApplication::Shutdown()
 		SDL_DestroyWindow(m_pWindow);
 		m_pWindow = NULL;
 	}
-
-  // Print trace messages.
-  // File names are chosen in order to use my script to parse.
-  FILE* fp;
-  fopen_s(&fp, "submit0.csv", "w");
-  fprintf(fp, "%s", submit0_buffer_.c_str());
-  fclose(fp);
-  fopen_s(&fp, "submit1.csv", "w");
-  fprintf(fp, "%s", submit1_buffer_.c_str());
-  fclose(fp);
-  fopen_s(&fp, "shader_scene_render.csv", "w");  
-  fprintf(fp, "%s", render_time_buffer_.c_str());
-  fclose(fp);
-  fopen_s(&fp, "vr_app_frame_time.csv", "w");
-  fprintf(fp, "%s", frame_time_buffer_.c_str());
-  fclose(fp);
 
 	SDL_Quit();
 }
@@ -566,9 +453,13 @@ bool CMainApplication::HandleInput()
 			{
 				bRet = true;
 			}
-			if( sdlEvent.key.keysym.sym == SDLK_c )
+		}
+		else if (sdlEvent.type == SDL_KEYUP)
+		{
+			if (sdlEvent.key.keysym.sym == SDLK_r)
 			{
-				m_bShowCubes = !m_bShowCubes;
+				g_bUseWorkAround = !g_bUseWorkAround;
+				SetupRenderModels();
 			}
 		}
 	}
@@ -614,21 +505,17 @@ static const double kAppStartTimeInSeconds = GetTimestampInSeconds();
 
 class ScopedTimer {
  public:
-  ScopedTimer(std::string& buffer, const char* name)
-    : start_time_(GetTimestampInSeconds()), buffer_(buffer), name_(name) {
-    //NvtxRangePushColored(name, 0xFFcccc00);
+  ScopedTimer(const char* name)
+    : start_time_(GetTimestampInSeconds()), name_(name) {
   }
   ~ScopedTimer() {
     const double now = GetTimestampInSeconds();
-    const double duration_in_ms = (now - start_time_) * 1000.0;
-    const uint64_t timestamp_in_us = static_cast<uint64_t>((now - kAppStartTimeInSeconds) * 1000000);
-    buffer_ += std::to_string(timestamp_in_us) + ", " + std::to_string(duration_in_ms) + "\n";
-    //NvtxRangePop();
+    const double duration_in_us = (now - start_time_) * 1000000.0;
+	dprintf("%s: %.2f us\n", name_, duration_in_us);
   }
 
  private:
   double start_time_;
-  std::string& buffer_;
   std::string name_;
 };
 
@@ -637,15 +524,8 @@ class ScopedTimer {
 //-----------------------------------------------------------------------------
 void CMainApplication::RenderFrame()
 {
-  ScopedTimer timer(frame_time_buffer_, "Frame");
-
 	// for now as fast as possible
-	{
-		ScopedTimer timer(render_time_buffer_, "Render");
-		DrawControllers();
-		RenderStereoTargets();
-		RenderDistortion();
-	}
+	RenderStereoTargets();
 
 	if ( m_bVblank && m_bGlFinishHack )
 	{
@@ -753,39 +633,6 @@ GLuint CMainApplication::CompileGLShader( const char *pchShaderName, const char 
 //-----------------------------------------------------------------------------
 bool CMainApplication::CreateAllShaders()
 {
-	m_unSceneProgramID = CompileGLShader( 
-		"Scene",
-
-		// Vertex Shader
-		"#version 410\n"
-		"uniform mat4 matrix;\n"
-		"layout(location = 0) in vec4 position;\n"
-		"layout(location = 1) in vec2 v2UVcoordsIn;\n"
-		"layout(location = 2) in vec3 v3NormalIn;\n"
-		"out vec2 v2UVcoords;\n"
-		"void main()\n"
-		"{\n"
-		"	v2UVcoords = v2UVcoordsIn;\n"
-		"	gl_Position = matrix * position;\n"
-		"}\n",
-
-		// Fragment Shader
-		"#version 410 core\n"
-		"uniform sampler2D mytexture;\n"
-		"in vec2 v2UVcoords;\n"
-		"out vec4 outputColor;\n"
-		"void main()\n"
-		"{\n"
-		"   outputColor = texture(mytexture, v2UVcoords);\n"
-		"}\n"
-		);
-	m_nSceneMatrixLocation = glGetUniformLocation( m_unSceneProgramID, "matrix" );
-	if( m_nSceneMatrixLocation == -1 )
-	{
-		dprintf( "Unable to find matrix uniform in scene shader\n" );
-		return false;
-	}
-
 	m_unControllerTransformProgramID = CompileGLShader(
 		"Controller",
 
@@ -823,17 +670,14 @@ bool CMainApplication::CreateAllShaders()
 		// Vertex Shader
 		"#version 410\n"
 		"uniform mat4 matrix;\n"
-		"layout(location = 0) in float aMeshToWorldMatrixIndex;\n"
-		"layout(location = 1) in vec4 aPosition;\n"
-		"layout(location = 2) in vec2 aTexCoord;\n"
-		"layout(location = 3) in float aTexCoordRectIndex;\n"
-		"out vec2 v2UVcoords;\n"
+		"layout(location = 0) in vec4 aPosition;\n"
+		"layout(location = 1) in vec2 aTexCoord;\n"
+		"layout(location = 2) in float aThirdAttribute;\n"
+		"out vec2 v2TexCoord;\n"
 		"void main()\n"
 		"{\n"
-		"	v2UVcoords = aTexCoord;\n"
-		"   vec4 position = aPosition / 255.0 * 2.0 - 1.0;\n"
-		"   position.w = 1.0;\n"
-		"	gl_Position = matrix * position;\n"
+		"   v2TexCoord = aTexCoord;\n"
+		"   gl_Position = matrix * vec4(aPosition.xyz, 1.0);\n"
 		"}\n",
 
 		//fragment shader
@@ -854,314 +698,8 @@ bool CMainApplication::CreateAllShaders()
 		return false;
 	}
 
-	m_unLensProgramID = CompileGLShader(
-		"Distortion",
-
-		// vertex shader
-		"#version 410 core\n"
-		"layout(location = 0) in vec4 position;\n"
-		"layout(location = 1) in vec2 v2UVredIn;\n"
-		"layout(location = 2) in vec2 v2UVGreenIn;\n"
-		"layout(location = 3) in vec2 v2UVblueIn;\n"
-		"noperspective  out vec2 v2UVred;\n"
-		"noperspective  out vec2 v2UVgreen;\n"
-		"noperspective  out vec2 v2UVblue;\n"
-		"void main()\n"
-		"{\n"
-		"	v2UVred = v2UVredIn;\n"
-		"	v2UVgreen = v2UVGreenIn;\n"
-		"	v2UVblue = v2UVblueIn;\n"
-		"	gl_Position = position;\n"
-		"}\n",
-
-		// fragment shader
-		"#version 410 core\n"
-		"uniform sampler2D mytexture;\n"
-
-		"noperspective  in vec2 v2UVred;\n"
-		"noperspective  in vec2 v2UVgreen;\n"
-		"noperspective  in vec2 v2UVblue;\n"
-
-		"out vec4 outputColor;\n"
-
-		"void main()\n"
-		"{\n"
-		"	float fBoundsCheck = ( (dot( vec2( lessThan( v2UVgreen.xy, vec2(0.05, 0.05)) ), vec2(1.0, 1.0))+dot( vec2( greaterThan( v2UVgreen.xy, vec2( 0.95, 0.95)) ), vec2(1.0, 1.0))) );\n"
-		"	if( fBoundsCheck > 1.0 )\n"
-		"	{ outputColor = vec4( 0, 0, 0, 1.0 ); }\n"
-		"	else\n"
-		"	{\n"
-		"		float red = texture(mytexture, v2UVred).x;\n"
-		"		float green = texture(mytexture, v2UVgreen).y;\n"
-		"		float blue = texture(mytexture, v2UVblue).z;\n"
-		"		outputColor = vec4( red, green, blue, 1.0  ); }\n"
-		"}\n"
-		);
-
-
-	return m_unSceneProgramID != 0 
-		&& m_unControllerTransformProgramID != 0
-		&& m_unRenderModelProgramID != 0
-		&& m_unLensProgramID != 0;
-}
-
-
-//-----------------------------------------------------------------------------
-// Purpose:
-//-----------------------------------------------------------------------------
-bool CMainApplication::SetupTexturemaps()
-{
-	std::string sExecutableDirectory = Path_StripFilename( Path_GetExecutablePath() );
-	std::string strFullPath = Path_MakeAbsolute( "../cube_texture.png", sExecutableDirectory );
-	
-	std::vector<unsigned char> imageRGBA;
-	unsigned nImageWidth, nImageHeight;
-	unsigned nError = lodepng::decode( imageRGBA, nImageWidth, nImageHeight, strFullPath.c_str() );
-	
-	if ( nError != 0 )
-		return false;
-
-	glGenTextures(1, &m_iTexture );
-	glBindTexture( GL_TEXTURE_2D, m_iTexture );
-
-	glTexImage2D( GL_TEXTURE_2D, 0, GL_RGBA, nImageWidth, nImageHeight,
-		0, GL_RGBA, GL_UNSIGNED_BYTE, &imageRGBA[0] );
-
-	glGenerateMipmap(GL_TEXTURE_2D);
-
-	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE );
-	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE );
-	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR );
-	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR );
-
-	GLfloat fLargest;
-	glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT, &fLargest);
-	glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY_EXT, fLargest);
-	 	
-	glBindTexture( GL_TEXTURE_2D, 0 );
-
-	return ( m_iTexture != 0 );
-}
-
-
-//-----------------------------------------------------------------------------
-// Purpose: create a sea of cubes
-//-----------------------------------------------------------------------------
-void CMainApplication::SetupScene()
-{
-	std::vector<float> vertdataarray;
-
-	Matrix4 matScale;
-	matScale.scale( m_fScale, m_fScale, m_fScale );
-	Matrix4 matTransform;
-	matTransform.translate(
-		-( (float)m_iSceneVolumeWidth * m_fScaleSpacing ) / 2.f,
-		-( (float)m_iSceneVolumeHeight * m_fScaleSpacing ) / 2.f,
-		-( (float)m_iSceneVolumeDepth * m_fScaleSpacing ) / 2.f);
-	
-	Matrix4 mat = matScale * matTransform;
-
-	for( int z = 0; z< m_iSceneVolumeDepth; z++ )
-	{
-		for( int y = 0; y< m_iSceneVolumeHeight; y++ )
-		{
-			for( int x = 0; x< m_iSceneVolumeWidth; x++ )
-			{
-				AddCubeToScene( mat, vertdataarray );
-				mat = mat * Matrix4().translate( m_fScaleSpacing, 0, 0 );
-			}
-			mat = mat * Matrix4().translate( -((float)m_iSceneVolumeWidth) * m_fScaleSpacing, m_fScaleSpacing, 0 );
-		}
-		mat = mat * Matrix4().translate( 0, -((float)m_iSceneVolumeHeight) * m_fScaleSpacing, m_fScaleSpacing );
-	}
-	m_uiVertcount = (unsigned int)(vertdataarray.size()/5);
-	
-	glGenVertexArrays( 1, &m_unSceneVAO );
-	glBindVertexArray( m_unSceneVAO );
-
-	glGenBuffers( 1, &m_glSceneVertBuffer );
-	glBindBuffer( GL_ARRAY_BUFFER, m_glSceneVertBuffer );
-	glBufferData( GL_ARRAY_BUFFER, sizeof(float) * vertdataarray.size(), &vertdataarray[0], GL_STATIC_DRAW);
-
-	glBindBuffer( GL_ARRAY_BUFFER, m_glSceneVertBuffer );
-
-	GLsizei stride = sizeof(VertexDataScene);
-	uintptr_t offset = 0;
-
-	glEnableVertexAttribArray( 0 );
-	glVertexAttribPointer( 0, 3, GL_FLOAT, GL_FALSE, stride , (const void *)offset);
-
-	offset += sizeof(Vector3);
-	glEnableVertexAttribArray( 1 );
-	glVertexAttribPointer( 1, 2, GL_FLOAT, GL_FALSE, stride, (const void *)offset);
-
-	glBindVertexArray( 0 );
-	glDisableVertexAttribArray(0);
-	glDisableVertexAttribArray(1);
-
-}
-
-
-//-----------------------------------------------------------------------------
-// Purpose:
-//-----------------------------------------------------------------------------
-void CMainApplication::AddCubeVertex( float fl0, float fl1, float fl2, float fl3, float fl4, std::vector<float> &vertdata )
-{
-	vertdata.push_back( fl0 );
-	vertdata.push_back( fl1 );
-	vertdata.push_back( fl2 );
-	vertdata.push_back( fl3 );
-	vertdata.push_back( fl4 );
-}
-
-
-//-----------------------------------------------------------------------------
-// Purpose:
-//-----------------------------------------------------------------------------
-void CMainApplication::AddCubeToScene( Matrix4 mat, std::vector<float> &vertdata )
-{
-	// Matrix4 mat( outermat.data() );
-
-	Vector4 A = mat * Vector4( 0, 0, 0, 1 );
-	Vector4 B = mat * Vector4( 1, 0, 0, 1 );
-	Vector4 C = mat * Vector4( 1, 1, 0, 1 );
-	Vector4 D = mat * Vector4( 0, 1, 0, 1 );
-	Vector4 E = mat * Vector4( 0, 0, 1, 1 );
-	Vector4 F = mat * Vector4( 1, 0, 1, 1 );
-	Vector4 G = mat * Vector4( 1, 1, 1, 1 );
-	Vector4 H = mat * Vector4( 0, 1, 1, 1 );
-
-	// triangles instead of quads
-	AddCubeVertex( E.x, E.y, E.z, 0, 1, vertdata ); //Front
-	AddCubeVertex( F.x, F.y, F.z, 1, 1, vertdata );
-	AddCubeVertex( G.x, G.y, G.z, 1, 0, vertdata );
-	AddCubeVertex( G.x, G.y, G.z, 1, 0, vertdata );
-	AddCubeVertex( H.x, H.y, H.z, 0, 0, vertdata );
-	AddCubeVertex( E.x, E.y, E.z, 0, 1, vertdata );
-					 
-	AddCubeVertex( B.x, B.y, B.z, 0, 1, vertdata ); //Back
-	AddCubeVertex( A.x, A.y, A.z, 1, 1, vertdata );
-	AddCubeVertex( D.x, D.y, D.z, 1, 0, vertdata );
-	AddCubeVertex( D.x, D.y, D.z, 1, 0, vertdata );
-	AddCubeVertex( C.x, C.y, C.z, 0, 0, vertdata );
-	AddCubeVertex( B.x, B.y, B.z, 0, 1, vertdata );
-					
-	AddCubeVertex( H.x, H.y, H.z, 0, 1, vertdata ); //Top
-	AddCubeVertex( G.x, G.y, G.z, 1, 1, vertdata );
-	AddCubeVertex( C.x, C.y, C.z, 1, 0, vertdata );
-	AddCubeVertex( C.x, C.y, C.z, 1, 0, vertdata );
-	AddCubeVertex( D.x, D.y, D.z, 0, 0, vertdata );
-	AddCubeVertex( H.x, H.y, H.z, 0, 1, vertdata );
-				
-	AddCubeVertex( A.x, A.y, A.z, 0, 1, vertdata ); //Bottom
-	AddCubeVertex( B.x, B.y, B.z, 1, 1, vertdata );
-	AddCubeVertex( F.x, F.y, F.z, 1, 0, vertdata );
-	AddCubeVertex( F.x, F.y, F.z, 1, 0, vertdata );
-	AddCubeVertex( E.x, E.y, E.z, 0, 0, vertdata );
-	AddCubeVertex( A.x, A.y, A.z, 0, 1, vertdata );
-					
-	AddCubeVertex( A.x, A.y, A.z, 0, 1, vertdata ); //Left
-	AddCubeVertex( E.x, E.y, E.z, 1, 1, vertdata );
-	AddCubeVertex( H.x, H.y, H.z, 1, 0, vertdata );
-	AddCubeVertex( H.x, H.y, H.z, 1, 0, vertdata );
-	AddCubeVertex( D.x, D.y, D.z, 0, 0, vertdata );
-	AddCubeVertex( A.x, A.y, A.z, 0, 1, vertdata );
-
-	AddCubeVertex( F.x, F.y, F.z, 0, 1, vertdata ); //Right
-	AddCubeVertex( B.x, B.y, B.z, 1, 1, vertdata );
-	AddCubeVertex( C.x, C.y, C.z, 1, 0, vertdata );
-	AddCubeVertex( C.x, C.y, C.z, 1, 0, vertdata );
-	AddCubeVertex( G.x, G.y, G.z, 0, 0, vertdata );
-	AddCubeVertex( F.x, F.y, F.z, 0, 1, vertdata );
-}
-
-
-//-----------------------------------------------------------------------------
-// Purpose: Draw all of the controllers as X/Y/Z lines
-//-----------------------------------------------------------------------------
-void CMainApplication::DrawControllers()
-{
-	std::vector<float> vertdataarray;
-
-	m_uiControllerVertcount = 0;
-	m_iTrackedControllerCount = 0;
-
-	for ( vr::TrackedDeviceIndex_t unTrackedDevice = vr::k_unTrackedDeviceIndex_Hmd + 1; unTrackedDevice < vr::k_unMaxTrackedDeviceCount; ++unTrackedDevice )
-	{
-		m_iTrackedControllerCount += 1;
-
-		const Matrix4 & mat = m_rmat4DevicePose[unTrackedDevice];
-
-		Vector4 center = mat * Vector4( 0, 0, 0, 1 );
-
-		for ( int i = 0; i < 3; ++i )
-		{
-			Vector3 color( 0, 0, 0 );
-			Vector4 point( 0, 0, 0, 1 );
-			point[i] += 0.05f;  // offset in X, Y, Z
-			color[i] = 1.0;  // R, G, B
-			point = mat * point;
-			vertdataarray.push_back( center.x );
-			vertdataarray.push_back( center.y );
-			vertdataarray.push_back( center.z );
-
-			vertdataarray.push_back( color.x );
-			vertdataarray.push_back( color.y );
-			vertdataarray.push_back( color.z );
-		
-			vertdataarray.push_back( point.x );
-			vertdataarray.push_back( point.y );
-			vertdataarray.push_back( point.z );
-		
-			vertdataarray.push_back( color.x );
-			vertdataarray.push_back( color.y );
-			vertdataarray.push_back( color.z );
-		
-			m_uiControllerVertcount += 2;
-		}
-
-		Vector4 start = mat * Vector4( 0, 0, -0.02f, 1 );
-		Vector4 end = mat * Vector4( 0, 0, -39.f, 1 );
-		Vector3 color( .92f, .92f, .71f );
-
-		vertdataarray.push_back( start.x );vertdataarray.push_back( start.y );vertdataarray.push_back( start.z );
-		vertdataarray.push_back( color.x );vertdataarray.push_back( color.y );vertdataarray.push_back( color.z );
-
-		vertdataarray.push_back( end.x );vertdataarray.push_back( end.y );vertdataarray.push_back( end.z );
-		vertdataarray.push_back( color.x );vertdataarray.push_back( color.y );vertdataarray.push_back( color.z );
-		m_uiControllerVertcount += 2;
-	}
-
-	// Setup the VAO the first time through.
-	if ( m_unControllerVAO == 0 )
-	{
-		glGenVertexArrays( 1, &m_unControllerVAO );
-		glBindVertexArray( m_unControllerVAO );
-
-		glGenBuffers( 1, &m_glControllerVertBuffer );
-		glBindBuffer( GL_ARRAY_BUFFER, m_glControllerVertBuffer );
-
-		GLuint stride = 2 * 3 * sizeof( float );
-		GLuint offset = 0;
-
-		glEnableVertexAttribArray( 0 );
-		glVertexAttribPointer( 0, 3, GL_FLOAT, GL_FALSE, stride, (const void *)(size_t)offset);
-
-		offset += sizeof( Vector3 );
-		glEnableVertexAttribArray( 1 );
-		glVertexAttribPointer( 1, 3, GL_FLOAT, GL_FALSE, stride, (const void *)(size_t)offset);
-
-		glBindVertexArray( 0 );
-	}
-
-	glBindBuffer( GL_ARRAY_BUFFER, m_glControllerVertBuffer );
-
-	// set vertex data if we have some
-	if( vertdataarray.size() > 0 )
-	{
-		//$ TODO: Use glBufferSubData for this...
-		glBufferData( GL_ARRAY_BUFFER, sizeof(float) * vertdataarray.size(), &vertdataarray[0], GL_STREAM_DRAW );
-	}
+	return m_unControllerTransformProgramID != 0
+		&& m_unRenderModelProgramID != 0;
 }
 
 
@@ -1236,179 +774,48 @@ bool CMainApplication::SetupStereoRenderTargets()
 //-----------------------------------------------------------------------------
 // Purpose:
 //-----------------------------------------------------------------------------
-void CMainApplication::SetupDistortion()
-{
-	GLushort m_iLensGridSegmentCountH = 43;
-	GLushort m_iLensGridSegmentCountV = 43;
-
-	float w = (float)( 1.0/float(m_iLensGridSegmentCountH-1));
-	float h = (float)( 1.0/float(m_iLensGridSegmentCountV-1));
-
-	float u, v = 0;
-
-	std::vector<VertexDataLens> vVerts(0);
-	VertexDataLens vert;
-
-	//left eye distortion verts
-	float Xoffset = -1;
-	for( int y=0; y<m_iLensGridSegmentCountV; y++ )
-	{
-		for( int x=0; x<m_iLensGridSegmentCountH; x++ )
-		{
-			u = x*w; v = 1-y*h;
-			vert.position = Vector2( Xoffset+u, -1+2*y*h );
-
-			vr::DistortionCoordinates_t dc0 = { { u, v }, { u, v }, { u, v } };
-
-			vert.texCoordRed = Vector2(dc0.rfRed[0], 1 - dc0.rfRed[1]);
-			vert.texCoordGreen =  Vector2(dc0.rfGreen[0], 1 - dc0.rfGreen[1]);
-			vert.texCoordBlue = Vector2(dc0.rfBlue[0], 1 - dc0.rfBlue[1]);
-
-			vVerts.push_back( vert );
-		}
-	}
-
-	//right eye distortion verts
-	Xoffset = 0;
-	for( int y=0; y<m_iLensGridSegmentCountV; y++ )
-	{
-		for( int x=0; x<m_iLensGridSegmentCountH; x++ )
-		{
-			u = x*w; v = 1-y*h;
-			vert.position = Vector2( Xoffset+u, -1+2*y*h );
-
-			vr::DistortionCoordinates_t dc0 = { { u, v }, { u, v }, { u, v } };
-
-			vert.texCoordRed = Vector2(dc0.rfRed[0], 1 - dc0.rfRed[1]);
-			vert.texCoordGreen = Vector2(dc0.rfGreen[0], 1 - dc0.rfGreen[1]);
-			vert.texCoordBlue = Vector2(dc0.rfBlue[0], 1 - dc0.rfBlue[1]);
-
-			vVerts.push_back( vert );
-		}
-	}
-
-	std::vector<GLushort> vIndices;
-	GLushort a,b,c,d;
-
-	GLushort offset = 0;
-	for( GLushort y=0; y<m_iLensGridSegmentCountV-1; y++ )
-	{
-		for( GLushort x=0; x<m_iLensGridSegmentCountH-1; x++ )
-		{
-			a = m_iLensGridSegmentCountH*y+x +offset;
-			b = m_iLensGridSegmentCountH*y+x+1 +offset;
-			c = (y+1)*m_iLensGridSegmentCountH+x+1 +offset;
-			d = (y+1)*m_iLensGridSegmentCountH+x +offset;
-			vIndices.push_back( a );
-			vIndices.push_back( b );
-			vIndices.push_back( c );
-
-			vIndices.push_back( a );
-			vIndices.push_back( c );
-			vIndices.push_back( d );
-		}
-	}
-
-	offset = (m_iLensGridSegmentCountH)*(m_iLensGridSegmentCountV);
-	for( GLushort y=0; y<m_iLensGridSegmentCountV-1; y++ )
-	{
-		for( GLushort x=0; x<m_iLensGridSegmentCountH-1; x++ )
-		{
-			a = m_iLensGridSegmentCountH*y+x +offset;
-			b = m_iLensGridSegmentCountH*y+x+1 +offset;
-			c = (y+1)*m_iLensGridSegmentCountH+x+1 +offset;
-			d = (y+1)*m_iLensGridSegmentCountH+x +offset;
-			vIndices.push_back( a );
-			vIndices.push_back( b );
-			vIndices.push_back( c );
-
-			vIndices.push_back( a );
-			vIndices.push_back( c );
-			vIndices.push_back( d );
-		}
-	}
-	m_uiIndexSize = (unsigned int)vIndices.size();
-
-	glGenVertexArrays( 1, &m_unLensVAO );
-	glBindVertexArray( m_unLensVAO );
-
-	glGenBuffers( 1, &m_glIDVertBuffer );
-	glBindBuffer( GL_ARRAY_BUFFER, m_glIDVertBuffer );
-	glBufferData( GL_ARRAY_BUFFER, vVerts.size()*sizeof(VertexDataLens), &vVerts[0], GL_STATIC_DRAW );
-
-	glGenBuffers( 1, &m_glIDIndexBuffer );
-	glBindBuffer( GL_ELEMENT_ARRAY_BUFFER, m_glIDIndexBuffer );
-	glBufferData( GL_ELEMENT_ARRAY_BUFFER, vIndices.size()*sizeof(GLushort), &vIndices[0], GL_STATIC_DRAW );
-
-	glEnableVertexAttribArray( 0 );
-	glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, sizeof(VertexDataLens), (void *)offsetof( VertexDataLens, position ) );
-
-	glEnableVertexAttribArray( 1 );
-	glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(VertexDataLens), (void *)offsetof( VertexDataLens, texCoordRed ) );
-
-	glEnableVertexAttribArray(2);
-	glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(VertexDataLens), (void *)offsetof( VertexDataLens, texCoordGreen ) );
-
-	glEnableVertexAttribArray(3);
-	glVertexAttribPointer(3, 2, GL_FLOAT, GL_FALSE, sizeof(VertexDataLens), (void *)offsetof( VertexDataLens, texCoordBlue ) );
-
-	glBindVertexArray( 0 );
-
-	glDisableVertexAttribArray(0);
-	glDisableVertexAttribArray(1);
-	glDisableVertexAttribArray(2);
-	glDisableVertexAttribArray(3);
-
-	glBindBuffer(GL_ARRAY_BUFFER, 0);
-	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
-}
-
-
-//-----------------------------------------------------------------------------
-// Purpose:
-//-----------------------------------------------------------------------------
 void CMainApplication::RenderStereoTargets()
 {
 	glClearColor( 0.15f, 0.15f, 0.18f, 1.0f ); // nice background color, but not black
 	glEnable( GL_MULTISAMPLE );
 
+	uint32_t half_width = m_nWindowWidth / 2;
+
 	// Left Eye
 	glBindFramebuffer( GL_FRAMEBUFFER, leftEyeDesc.m_nRenderFramebufferId );
- 	glViewport(0, 0, m_nRenderWidth, m_nRenderHeight );
+ 	glViewport(0, 0, half_width, m_nWindowHeight);
  	RenderScene( vr::Eye_Left );
  	glBindFramebuffer( GL_FRAMEBUFFER, 0 );
 	
 	glDisable( GL_MULTISAMPLE );
 	 	
  	glBindFramebuffer(GL_READ_FRAMEBUFFER, leftEyeDesc.m_nRenderFramebufferId);
-    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, leftEyeDesc.m_nResolveFramebufferId );
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
 
-    glBlitFramebuffer( 0, 0, m_nRenderWidth, m_nRenderHeight, 0, 0, m_nRenderWidth, m_nRenderHeight, 
+    glBlitFramebuffer( 0, 0, half_width, m_nWindowHeight, 0, 0, half_width, m_nWindowHeight,
 		GL_COLOR_BUFFER_BIT,
  		GL_LINEAR );
 
  	glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
-    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0 );	
 
 	glEnable( GL_MULTISAMPLE );
 
 	// Right Eye
 	glBindFramebuffer( GL_FRAMEBUFFER, rightEyeDesc.m_nRenderFramebufferId );
- 	glViewport(0, 0, m_nRenderWidth, m_nRenderHeight );
+ 	glViewport(0, 0, half_width, m_nWindowHeight);
  	RenderScene( vr::Eye_Right );
  	glBindFramebuffer( GL_FRAMEBUFFER, 0 );
  	
 	glDisable( GL_MULTISAMPLE );
 
- 	glBindFramebuffer(GL_READ_FRAMEBUFFER, rightEyeDesc.m_nRenderFramebufferId );
-    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, rightEyeDesc.m_nResolveFramebufferId );
+ 	glBindFramebuffer(GL_READ_FRAMEBUFFER, rightEyeDesc.m_nRenderFramebufferId);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
 	
-    glBlitFramebuffer( 0, 0, m_nRenderWidth, m_nRenderHeight, 0, 0, m_nRenderWidth, m_nRenderHeight, 
+    glBlitFramebuffer(0, 0, half_width, m_nWindowHeight, half_width, 0, 2*half_width, m_nWindowHeight,
 		GL_COLOR_BUFFER_BIT,
  		GL_LINEAR  );
 
  	glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
-    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0 );
 }
 
 
@@ -1419,24 +826,6 @@ void CMainApplication::RenderScene( vr::Hmd_Eye nEye )
 {
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 	glEnable(GL_DEPTH_TEST);
-
-	if( m_bShowCubes )
-	{
-		glUseProgram( m_unSceneProgramID );
-		glUniformMatrix4fv( m_nSceneMatrixLocation, 1, GL_FALSE, GetCurrentViewProjectionMatrix( nEye ).get() );
-		glBindVertexArray( m_unSceneVAO );
-		glBindTexture( GL_TEXTURE_2D, m_iTexture );
-		glDrawArrays( GL_TRIANGLES, 0, m_uiVertcount );
-		glBindVertexArray( 0 );
-	}
-
-
-	// draw the controller axis lines
-	glUseProgram( m_unControllerTransformProgramID );
-	glUniformMatrix4fv( m_nControllerMatrixLocation, 1, GL_FALSE, GetCurrentViewProjectionMatrix( nEye ).get() );
-	glBindVertexArray( m_unControllerVAO );
-	glDrawArrays( GL_LINES, 0, m_uiControllerVertcount );
-	glBindVertexArray( 0 );
 
 	// ----- Render Model rendering -----
 	glUseProgram( m_unRenderModelProgramID );
@@ -1453,38 +842,6 @@ void CMainApplication::RenderScene( vr::Hmd_Eye nEye )
 		m_rTrackedDeviceToRenderModel[ unTrackedDevice ]->Draw();
 	}
 
-	glUseProgram( 0 );
-}
-
-
-//-----------------------------------------------------------------------------
-// Purpose:
-//-----------------------------------------------------------------------------
-void CMainApplication::RenderDistortion()
-{
-	glDisable(GL_DEPTH_TEST);
-	glViewport( 0, 0, m_nWindowWidth, m_nWindowHeight );
-
-	glBindVertexArray( m_unLensVAO );
-	glUseProgram( m_unLensProgramID );
-
-	//render left lens (first half of index array )
-	glBindTexture(GL_TEXTURE_2D, leftEyeDesc.m_nResolveTextureId );
-	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE );
-	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE );
-	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR );
-	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR );
-	glDrawElements( GL_TRIANGLES, m_uiIndexSize/2, GL_UNSIGNED_SHORT, 0 );
-
-	//render right lens (second half of index array )
-	glBindTexture(GL_TEXTURE_2D, rightEyeDesc.m_nResolveTextureId  );
-	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE );
-	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE );
-	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR );
-	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR );
-	glDrawElements( GL_TRIANGLES, m_uiIndexSize/2, GL_UNSIGNED_SHORT, (const void *)(size_t)(m_uiIndexSize) );
-
-	glBindVertexArray( 0 );
 	glUseProgram( 0 );
 }
 
@@ -1581,25 +938,10 @@ void CMainApplication::UpdateHMDMatrixPose()
 //-----------------------------------------------------------------------------
 CGLRenderModel *CMainApplication::FindOrLoadRenderModel( const char *pchRenderModelName )
 {
-	CGLRenderModel *pRenderModel = NULL;
-	for( std::vector< CGLRenderModel * >::iterator i = m_vecRenderModels.begin(); i != m_vecRenderModels.end(); i++ )
-	{
-		if( !stricmp( (*i)->GetName().c_str(), pchRenderModelName ) )
-		{
-			pRenderModel = *i;
-			break;
-		}
-	}
-
-	// load the model if we didn't find one
-	if( !pRenderModel )
-	{
-		pRenderModel = new CGLRenderModel(pchRenderModelName);
-		const std::string sExecutableDirectory = Path_StripFilename(Path_GetExecutablePath());
-		const std::string file_path = Path_MakeAbsolute(std::string("../") + pchRenderModelName + ".model", sExecutableDirectory);
-		pRenderModel->BInit(file_path.c_str());
-		m_vecRenderModels.push_back(pRenderModel);
-	}
+	CGLRenderModel *pRenderModel = new CGLRenderModel(pchRenderModelName);
+	const std::string sExecutableDirectory = Path_StripFilename(Path_GetExecutablePath());
+	const std::string file_path = Path_MakeAbsolute(std::string("../") + pchRenderModelName + ".model", sExecutableDirectory);
+	pRenderModel->BInit(file_path.c_str());
 	return pRenderModel;
 }
 
@@ -1641,7 +983,12 @@ void CMainApplication::SetupRenderModelForTrackedDevice( vr::TrackedDeviceIndex_
 //-----------------------------------------------------------------------------
 void CMainApplication::SetupRenderModels()
 {
-	memset( m_rTrackedDeviceToRenderModel, 0, sizeof( m_rTrackedDeviceToRenderModel ) );
+	for (uint32_t unTrackedDevice = 0; unTrackedDevice < vr::k_unMaxTrackedDeviceCount; unTrackedDevice++) {
+		if (m_rTrackedDeviceToRenderModel[unTrackedDevice]) {
+			delete m_rTrackedDeviceToRenderModel[unTrackedDevice];
+		}
+		m_rTrackedDeviceToRenderModel[unTrackedDevice] = nullptr;
+	}
 
 	for( uint32_t unTrackedDevice = vr::k_unTrackedDeviceIndex_Hmd + 1; unTrackedDevice < vr::k_unMaxTrackedDeviceCount; unTrackedDevice++ )
 	{
@@ -1855,15 +1202,17 @@ void CGLRenderModel::BInitInternal(const vector<vr::RenderModel_Vertex_t>& verti
 	{
 		vector<Vertex> agg_vertices(vertices.size());
 		for (size_t i = 0; i < vertices.size(); ++i) {
-			agg_vertices[i].aPosition[0] = Uint8FromFloat(vertices[i].vPosition.v[0]);
-			agg_vertices[i].aPosition[1] = Uint8FromFloat(vertices[i].vPosition.v[1]);
-			agg_vertices[i].aPosition[2] = Uint8FromFloat(vertices[i].vPosition.v[2]);
-			agg_vertices[i].aTexCoord[0] = Uint16FromFloat(vertices[i].rfTextureCoord[0]);
-			agg_vertices[i].aTexCoord[1] = Uint16FromFloat(vertices[i].rfTextureCoord[1]);
-			//agg_vertices[i].aTexCoord[0] = vertices[i].rfTextureCoord[0];
-			//agg_vertices[i].aTexCoord[1] = vertices[i].rfTextureCoord[1];
-			agg_vertices[i].aTexCoordRectIndex = 0;
-			agg_vertices[i].aMeshToWorldMatrixIndex = 0;
+			//agg_vertices[i].aPosition[0] = Uint8FromFloat(vertices[i].vPosition.v[0]);
+			//agg_vertices[i].aPosition[1] = Uint8FromFloat(vertices[i].vPosition.v[1]);
+			//agg_vertices[i].aPosition[2] = Uint8FromFloat(vertices[i].vPosition.v[2]);
+			agg_vertices[i].aPosition[0] = vertices[i].vPosition.v[0];
+			agg_vertices[i].aPosition[1] = vertices[i].vPosition.v[1];
+			agg_vertices[i].aPosition[2] = vertices[i].vPosition.v[2];
+			//agg_vertices[i].aTexCoord[0] = Uint16FromFloat(vertices[i].rfTextureCoord[0]);
+			//agg_vertices[i].aTexCoord[1] = Uint16FromFloat(vertices[i].rfTextureCoord[1]);
+			agg_vertices[i].aTexCoord[0] = vertices[i].rfTextureCoord[0];
+			agg_vertices[i].aTexCoord[1] = vertices[i].rfTextureCoord[1];
+			agg_vertices[i].aThirdAttribute = 0;
 		}
 
 		size_t offset = 0;
@@ -1875,19 +1224,16 @@ void CGLRenderModel::BInitInternal(const vector<vr::RenderModel_Vertex_t>& verti
 	}
 
 	// Identify the components in the vertex buffer
-	glVertexAttribPointer(1, 4, GL_UNSIGNED_BYTE, GL_FALSE, sizeof(Vertex), (const void *)offsetof(Vertex, aPosition));
-	glVertexAttribDivisor(1, 0);
-	glEnableVertexAttribArray(1);
-	glVertexAttribPointer(0, 1, GL_UNSIGNED_BYTE, GL_FALSE, sizeof(Vertex), (const void *)offsetof(Vertex, aMeshToWorldMatrixIndex));
+	glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, sizeof(Vertex), (const void *)offsetof(Vertex, aPosition));
 	glVertexAttribDivisor(0, 0);
 	glEnableVertexAttribArray(0);
-	glVertexAttribPointer(2, 2, GL_UNSIGNED_SHORT, GL_TRUE, sizeof(Vertex), (const void *)offsetof(Vertex, aTexCoord));
+	glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (const void *)offsetof(Vertex, aTexCoord));
+	glVertexAttribDivisor(1, 0);
+	glEnableVertexAttribArray(1);
+	// TODO: If we only specify one short, AMD driver seems to repack the buffer (slow). Instead, pretend it to be 2-element long.
+	glVertexAttribPointer(2, g_bUseWorkAround ? 2 : 1, GL_UNSIGNED_SHORT, GL_FALSE, sizeof(Vertex), (const void *)offsetof(Vertex, aThirdAttribute));
 	glVertexAttribDivisor(2, 0);
 	glEnableVertexAttribArray(2);
-	// TODO: If we only specify one short, AMD driver seems to repack the buffer (slow). Instead, pretend it to be 2-element long.
-	glVertexAttribPointer(3, 2, GL_UNSIGNED_SHORT, GL_FALSE, sizeof(Vertex), (const void *)offsetof(Vertex, aTexCoordRectIndex));
-	glVertexAttribDivisor(3, 0);
-	glEnableVertexAttribArray(3);
 
 	// Create and populate the index buffer
 	glGenBuffers(1, &m_glIndexBuffer[i]);
@@ -1941,12 +1287,12 @@ void CGLRenderModel::Draw()
 	for (size_t i = 0; i < kNumVAOs; ++i) {
 		glBindVertexArray(m_glVertArray[i]);
 		glActiveTexture( GL_TEXTURE0 );
-		glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, m_glIndexBuffer[i]);  // TODO: necessary?
 		glBindTexture( GL_TEXTURE_2D, m_glTexture );
-		glDrawElements(GL_TRIANGLES, 262971, GL_UNSIGNED_INT, nullptr);
-		//glDrawElements(GL_TRIANGLES, m_unVertexCount, GL_UNSIGNED_INT, nullptr);
+		{
+			ScopedTimer timer("glDrawElements");
+			glDrawElements(GL_TRIANGLES, 262971, GL_UNSIGNED_INT, nullptr);
+		}
 	}
-
 	glBindVertexArray(0);
 }
 
